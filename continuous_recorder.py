@@ -32,7 +32,7 @@ logger.addHandler(console_handler)
 
 # Create file handler
 os.makedirs("logs", exist_ok=True)
-log_file = os.path.join("logs", f"recorder_{datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.log")
+log_file = os.path.join("logs", f"recorder_{datetime.datetime.now().strftime('%d-%b-%Y_%H-%M-%S')}.log")
 file_handler = logging.FileHandler(log_file)
 file_handler.setLevel(logging.DEBUG)
 file_formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -468,14 +468,11 @@ class AudioRecorder:
         # Calculate next file time
         if self.recording and self.current_file:
             try:
-                # Extract current file start time
+                # Extract end time from filename
                 filename = os.path.basename(self.current_file)
-                start_time_str = filename.split("_")[0] + "_" + filename.split("_")[1]
-                start_time = datetime.datetime.strptime(start_time_str, "%Y-%m-%d_%H-%M")
-                
-                # Add recording hours to get next file time
-                next_file_time = start_time + datetime.timedelta(hours=self.config["general"]["recording_hours"])
-                status["next_file_time"] = next_file_time.strftime("%Y-%m-%d %H:%M")
+                end_time_str = filename.split("_to_")[1].split(".")[0]
+                next_file_time = datetime.datetime.strptime(end_time_str, "%Y-%b-%d_%H-%M")
+                status["next_file_time"] = next_file_time.strftime("%d/%b/%Y %H:%M")
             except Exception as e:
                 logger.error(f"Error calculating next file time: {e}")
         
@@ -730,19 +727,48 @@ class AudioRecorder:
             current_file = None
             current_wave = None
             last_file_time = None
+            next_file_time = None
             
             while self.recording or not self.audio_queue.empty():
                 # Check if we need to create a new file
                 now = datetime.datetime.now()
-                file_time = now.replace(minute=now.minute - (now.minute % 60), second=0, microsecond=0)
                 
-                if last_file_time is None or file_time != last_file_time:
+                # Create a new file if:
+                # 1. This is the first file (last_file_time is None)
+                # 2. We've reached the scheduled time for a new file (next_file_time)
+                # 3. We've crossed a time block boundary
+                
+                # Calculate the current time block
+                block_size = self.config["general"]["recording_hours"]
+                current_block = (now.hour // block_size) * block_size
+                
+                # Round down to the current block start time for block tracking
+                block_start_time = now.replace(hour=current_block, minute=0, second=0, microsecond=0)
+                
+                # Use actual time (rounded to the minute) for the file start time
+                actual_start_time = now.replace(second=0, microsecond=0)
+                
+                # If we're at a new block boundary (within 5 minutes after) and have a next_file_time
+                if next_file_time is not None and abs((now - next_file_time).total_seconds()) < 300:
+                    block_start_time = next_file_time
+                    actual_start_time = next_file_time
+                    logger.info(f"Time block boundary detected, starting new file at {block_start_time.strftime('%d/%m/%Y %H:%M')}")
+                
+                if (last_file_time is None or 
+                    (next_file_time is not None and now >= next_file_time) or 
+                    (last_file_time is not None and block_start_time != last_file_time)):
+                    
                     # Close previous file if open
                     if current_wave:
                         current_wave.close()
+                        logger.info(f"Closed recording file: {current_file}")
+                        
+                        # Convert to MP3 if needed
+                        if self.config["audio"]["format"] == "mp3":
+                            self._convert_to_mp3(current_file)
                     
-                    # Create new file
-                    file_path = self._create_file_path(file_time)
+                    # Create new file with actual start time
+                    file_path = self._create_file_path(block_start_time, actual_start_time)
                     
                     try:
                         # Create directory if it doesn't exist
@@ -756,9 +782,21 @@ class AudioRecorder:
                         
                         current_file = file_path
                         self.current_file = file_path
-                        last_file_time = file_time
+                        last_file_time = block_start_time
+                        
+                        # Calculate when the next file should be created
+                        # Extract end time from filename
+                        filename = os.path.basename(file_path)
+                        end_time_str = filename.split("_to_")[1].split(".")[0]
+                        next_file_time = datetime.datetime.strptime(end_time_str, "%Y-%b-%d_%H-%M")
+                        
+                        # Format dates for display in day/month/year format
+                        display_start_time = actual_start_time.strftime("%d/%b/%Y %H:%M")
+                        display_end_time = next_file_time.strftime("%d/%b/%Y %H:%M")
                         
                         logger.info(f"Created new recording file: {file_path}")
+                        logger.info(f"Recording from {display_start_time} to {display_end_time}")
+                        logger.info(f"Next file will be created at: {next_file_time.strftime('%d/%b/%Y %H:%M')}")
                     except Exception as e:
                         logger.error(f"Error creating file {file_path}: {e}")
                         time.sleep(1)
@@ -797,19 +835,36 @@ class AudioRecorder:
         except Exception as e:
             logger.error(f"Error in processing thread: {e}")
             
-    def _create_file_path(self, file_time):
+    def _create_file_path(self, block_start_time, actual_start_time):
         """Create a file path for the recording."""
-        # Calculate end time (start time + recording hours)
-        end_time = file_time + datetime.timedelta(hours=self.config["general"]["recording_hours"])
+        # Default recording duration is 3 hours
+        recording_hours = self.config["general"]["recording_hours"]
         
-        # Format times
-        start_str = file_time.strftime("%Y-%m-%d_%H-%M")
-        end_str = end_time.strftime("%Y-%m-%d_%H-%M")
+        # Calculate the next block boundary
+        # For 3-hour blocks, these would be at hours 0, 3, 6, 9, 12, 15, 18, 21
+        current_hour = block_start_time.hour
+        block_size = recording_hours
+        next_block_hour = ((current_hour // block_size) + 1) * block_size
         
-        # Create directory structure
-        year_dir = os.path.join(self.config["paths"]["recordings_dir"], file_time.strftime("%Y"))
-        month_dir = os.path.join(year_dir, file_time.strftime("%m"))
-        day_dir = os.path.join(month_dir, file_time.strftime("%d"))
+        # Calculate the end time based on the next block boundary
+        if next_block_hour >= 24:  # If next block is tomorrow
+            # End at midnight
+            end_time = (block_start_time + datetime.timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+            logger.info(f"Recording will end at midnight and continue in a new file")
+        else:
+            # End at the next block boundary
+            end_time = block_start_time.replace(hour=next_block_hour, minute=0, second=0, microsecond=0)
+            logger.info(f"Recording will end at the next {block_size}-hour block: {end_time.strftime('%d/%b/%Y %H:%M')}")
+        
+        # Format times for filename (keep original format for directory structure)
+        # Use actual start time for the filename with short month name
+        start_str = actual_start_time.strftime("%Y-%b-%d_%H-%M")
+        end_str = end_time.strftime("%Y-%b-%d_%H-%M")
+        
+        # Create directory structure - use block_start_time for directory structure
+        year_dir = os.path.join(self.config["paths"]["recordings_dir"], block_start_time.strftime("%Y"))
+        month_dir = os.path.join(year_dir, block_start_time.strftime("%m"))
+        day_dir = os.path.join(month_dir, block_start_time.strftime("%d"))
         
         # Create file name
         file_name = f"{start_str}_to_{end_str}.wav"
@@ -871,7 +926,7 @@ class AudioRecorder:
             
         # Calculate cutoff date
         cutoff_date = datetime.datetime.now() - datetime.timedelta(days=retention_days)
-        logger.info(f"Cleaning up recordings older than {cutoff_date.strftime('%Y-%m-%d')}")
+        logger.info(f"Cleaning up recordings older than {cutoff_date.strftime('%d/%b/%Y')}")
         
         # Walk through recordings directory
         recordings_dir = self.config["paths"]["recordings_dir"]
@@ -888,13 +943,22 @@ class AudioRecorder:
                         # Extract date from file name
                         try:
                             date_str = file.split("_")[0]
-                            file_date = datetime.datetime.strptime(date_str, "%Y-%m-%d")
+                            file_date = datetime.datetime.strptime(date_str, "%Y-%b-%d")
                             
                             if file_date < cutoff_date:
                                 os.remove(file_path)
                                 logger.info(f"Removed old recording: {file_path}")
                         except Exception as e:
-                            logger.error(f"Error parsing date from file {file}: {e}")
+                            # Try the old format if the new format fails
+                            try:
+                                date_str = file.split("_")[0]
+                                file_date = datetime.datetime.strptime(date_str, "%Y-%m-%d")
+                                
+                                if file_date < cutoff_date:
+                                    os.remove(file_path)
+                                    logger.info(f"Removed old recording: {file_path}")
+                            except Exception:
+                                logger.error(f"Error parsing date from file {file}: {e}")
         except Exception as e:
             logger.error(f"Error cleaning up old recordings: {e}")
             
