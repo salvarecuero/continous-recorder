@@ -9,6 +9,7 @@ import threading
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 import logging
+import psutil
 
 # Import core components
 from core.audio_recorder import AudioRecorder, HAS_WASAPI
@@ -23,8 +24,6 @@ class RecorderGUI:
         """Initialize the GUI."""
         self.root = root
         self.root.title("Continuous Audio Recorder")
-        self.root.geometry("600x500")
-        self.root.minsize(600, 500)
         
         # Set icon if available
         try:
@@ -34,6 +33,9 @@ class RecorderGUI:
         
         # Initialize recorder
         self.recorder = AudioRecorder()
+        
+        # Create scrollable canvas
+        self.create_scrollable_frame()
         
         # Create GUI elements
         self.create_widgets()
@@ -47,11 +49,141 @@ class RecorderGUI:
         # Minimize to tray if configured
         if self.recorder.config["general"]["minimize_to_tray"]:
             self.setup_tray_icon()
+        
+        # Update window size after widgets are created
+        self.root.update()
+        self.adjust_window_size()
+    
+    def create_scrollable_frame(self):
+        """Create a scrollable frame for the application content."""
+        # Create outer frame to hold canvas and scrollbar
+        self.outer_frame = ttk.Frame(self.root)
+        self.outer_frame.pack(fill=tk.BOTH, expand=True)
+        
+        # Create canvas with scrollbar
+        self.canvas = tk.Canvas(self.outer_frame)
+        self.scrollbar = ttk.Scrollbar(self.outer_frame, orient="vertical", command=self.canvas.yview)
+        self.scrollable_frame = ttk.Frame(self.canvas)
+        
+        # Configure canvas
+        self.scrollable_frame.bind(
+            "<Configure>",
+            lambda e: self._update_scrollregion()
+        )
+        
+        # Create window in canvas
+        self.canvas_window = self.canvas.create_window((0, 0), window=self.scrollable_frame, anchor="nw")
+        
+        # Configure canvas to expand with window
+        self.canvas.configure(yscrollcommand=self._update_scrollbar)
+        
+        # Pack canvas and scrollbar
+        self.canvas.pack(side="left", fill="both", expand=True)
+        self.scrollbar.pack(side="right", fill="y")
+        
+        # Bind canvas resize to window resize
+        self.canvas.bind("<Configure>", self.on_canvas_resize)
+        
+        # Bind mousewheel for scrolling
+        self.bind_mousewheel()
+    
+    def _update_scrollregion(self):
+        """Update the scroll region of the canvas."""
+        self.canvas.configure(scrollregion=self.canvas.bbox("all"))
+        self._update_scrollbar_visibility()
+    
+    def _update_scrollbar(self, *args):
+        """Update the scrollbar position."""
+        self.scrollbar.set(*args)
+        self._update_scrollbar_visibility()
+    
+    def _update_scrollbar_visibility(self):
+        """Show or hide scrollbar based on content height."""
+        # Get canvas and content heights
+        canvas_height = self.canvas.winfo_height()
+        content_height = self.scrollable_frame.winfo_reqheight()
+        
+        # Show scrollbar only if content is taller than canvas
+        if content_height > canvas_height:
+            self.scrollbar.pack(side="right", fill="y")
+        else:
+            self.scrollbar.pack_forget()
+    
+    def on_canvas_resize(self, event):
+        """Handle canvas resize event."""
+        # Update the width of the canvas window to match the canvas width
+        canvas_width = event.width
+        self.canvas.itemconfig(self.canvas_window, width=canvas_width)
+        
+        # Update scrollbar visibility
+        self._update_scrollbar_visibility()
+    
+    def bind_mousewheel(self):
+        """Bind mousewheel events for scrolling."""
+        def _on_mousewheel_windows(event):
+            # Windows mousewheel event
+            self.canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+        
+        def _on_mousewheel_linux(event):
+            # Linux mousewheel event
+            if event.num == 4:
+                self.canvas.yview_scroll(-1, "units")
+            elif event.num == 5:
+                self.canvas.yview_scroll(1, "units")
+        
+        def _on_mousewheel_macos(event):
+            # macOS mousewheel event
+            self.canvas.yview_scroll(int(-1 * event.delta), "units")
+        
+        # Bind for different platforms
+        if sys.platform == "win32":
+            self.canvas.bind_all("<MouseWheel>", _on_mousewheel_windows)
+        elif sys.platform == "darwin":
+            self.canvas.bind_all("<MouseWheel>", _on_mousewheel_macos)
+        else:
+            # Linux and other platforms
+            self.canvas.bind_all("<Button-4>", _on_mousewheel_linux)
+            self.canvas.bind_all("<Button-5>", _on_mousewheel_linux)
+    
+    def adjust_window_size(self):
+        """Adjust window size to fit content."""
+        # Wait for all widgets to be properly measured
+        self.root.update_idletasks()
+        
+        # Get required height for all widgets
+        required_height = self.scrollable_frame.winfo_reqheight() + 20  # Add some padding
+        
+        # Get screen dimensions
+        screen_width = self.root.winfo_screenwidth()
+        screen_height = self.root.winfo_screenheight()
+        
+        # Set window height to required height, but not more than 90% of screen height
+        window_height = min(required_height, screen_height * 0.9)
+        
+        # Set window width (fixed width or percentage of screen width)
+        window_width = min(800, screen_width * 0.7)
+        
+        # Set window size
+        self.root.geometry(f"{int(window_width)}x{int(window_height)}")
+        
+        # Set minimum size
+        self.root.minsize(600, 400)
+        
+        # Center window on screen
+        x_position = (screen_width - window_width) // 2
+        y_position = (screen_height - window_height) // 2
+        self.root.geometry(f"+{int(x_position)}+{int(y_position)}")
+        
+        # Update scrollbar visibility
+        self._update_scrollbar_visibility()
     
     def create_widgets(self):
         """Create the GUI widgets."""
+        # Create styles for colored labels
+        self._create_colored_styles()
+        
         # Main frame
-        main_frame = ttk.Frame(self.root, padding="10")
+        main_frame = ttk.Frame(self.scrollable_frame, padding="10")
         main_frame.pack(fill=tk.BOTH, expand=True)
         
         # Status frame
@@ -148,7 +280,7 @@ class RecorderGUI:
         
         ttk.Label(device_frame, text="Recording Device:").pack(side=tk.LEFT, padx=5)
         
-        self.device_list = ttk.Combobox(device_frame, width=40)
+        self.device_list = ttk.Combobox(device_frame, width=40, state="readonly")
         self.device_list.pack(side=tk.LEFT, padx=5)
         
         refresh_button = ttk.Button(device_frame, text="Refresh", command=self.refresh_devices)
@@ -258,19 +390,73 @@ class RecorderGUI:
         
         # Log frame
         log_frame = ttk.LabelFrame(main_frame, text="Log", padding="10")
-        log_frame.pack(fill=tk.BOTH, expand=True, pady=5)
+        log_frame.pack(fill=tk.X, pady=5)
         
         # Log text
         self.log_text = tk.Text(log_frame, height=5, wrap=tk.WORD)
-        self.log_text.pack(fill=tk.BOTH, expand=True, side=tk.LEFT)
+        self.log_text.pack(fill=tk.X, expand=False, side=tk.LEFT)
         
         # Scrollbar
         scrollbar = ttk.Scrollbar(log_frame, command=self.log_text.yview)
         scrollbar.pack(fill=tk.Y, side=tk.RIGHT)
         self.log_text.config(yscrollcommand=scrollbar.set)
         
+        # System resource monitor frame
+        resource_frame = ttk.LabelFrame(main_frame, text="System Resources", padding="10")
+        resource_frame.pack(fill=tk.X, pady=5)
+        
+        # CPU usage
+        cpu_frame = ttk.Frame(resource_frame)
+        cpu_frame.pack(fill=tk.X, pady=2)
+        ttk.Label(cpu_frame, text="CPU Usage:").pack(side=tk.LEFT, padx=5)
+        self.cpu_var = tk.StringVar(value="0%")
+        self.cpu_label = ttk.Label(cpu_frame, textvariable=self.cpu_var, width=8, style="Normal.TLabel")
+        self.cpu_label.pack(side=tk.LEFT, padx=5)
+        
+        # CPU progress bar
+        self.cpu_progress = ttk.Progressbar(cpu_frame, orient=tk.HORIZONTAL, length=200, mode='determinate')
+        self.cpu_progress.pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
+        
+        # RAM usage
+        ram_frame = ttk.Frame(resource_frame)
+        ram_frame.pack(fill=tk.X, pady=2)
+        ttk.Label(ram_frame, text="RAM Usage:").pack(side=tk.LEFT, padx=5)
+        self.ram_var = tk.StringVar(value="0 MB")
+        self.ram_label = ttk.Label(ram_frame, textvariable=self.ram_var, width=12, style="Normal.TLabel")
+        self.ram_label.pack(side=tk.LEFT, padx=5)
+        
+        # RAM progress bar
+        self.ram_progress = ttk.Progressbar(ram_frame, orient=tk.HORIZONTAL, length=200, mode='determinate')
+        self.ram_progress.pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
+        
+        # Total system info
+        system_frame = ttk.Frame(resource_frame)
+        system_frame.pack(fill=tk.X, pady=2)
+        ttk.Label(system_frame, text="System CPU:").pack(side=tk.LEFT, padx=5)
+        self.system_cpu_var = tk.StringVar(value="0%")
+        self.system_cpu_label = ttk.Label(system_frame, textvariable=self.system_cpu_var, width=8, style="Normal.TLabel")
+        self.system_cpu_label.pack(side=tk.LEFT, padx=5)
+        
+        ttk.Label(system_frame, text="System RAM:").pack(side=tk.LEFT, padx=5)
+        self.system_ram_var = tk.StringVar(value="0 MB / 0 GB")
+        self.system_ram_label = ttk.Label(system_frame, textvariable=self.system_ram_var, width=16, style="Normal.TLabel")
+        self.system_ram_label.pack(side=tk.LEFT, padx=5)
+        
         # Populate device list
         self.refresh_devices()
+        
+        # Start resource monitoring
+        self.start_resource_monitor()
+    
+    def _create_colored_styles(self):
+        """Create ttk styles for colored labels."""
+        style = ttk.Style()
+        
+        # Create styles for different colors
+        style.configure("Normal.TLabel", foreground="black")
+        style.configure("Green.TLabel", foreground="green")
+        style.configure("Orange.TLabel", foreground="orange")
+        style.configure("Red.TLabel", foreground="red")
     
     def refresh_devices(self):
         """Refresh the list of available audio devices."""
@@ -545,6 +731,68 @@ class RecorderGUI:
         
         # Schedule next update
         self.root.after(1000, self.update_status)
+    
+    def start_resource_monitor(self):
+        """Start monitoring system resources."""
+        # Get process
+        self.process = psutil.Process()
+        
+        # Update resources
+        self.update_resource_monitor()
+    
+    def update_resource_monitor(self):
+        """Update resource monitor display."""
+        try:
+            # Get CPU usage (percent)
+            cpu_percent = self.process.cpu_percent(interval=0)
+            self.cpu_var.set(f"{cpu_percent:.1f}%")
+            self.cpu_progress['value'] = cpu_percent
+            
+            # Set color based on CPU usage
+            self._set_label_color(self.cpu_label, cpu_percent)
+            
+            # Get memory usage (MB)
+            memory_info = self.process.memory_info()
+            memory_mb = memory_info.rss / (1024 * 1024)
+            self.ram_var.set(f"{memory_mb:.1f} MB")
+            
+            # Calculate RAM percentage (for progress bar)
+            total_ram = psutil.virtual_memory().total / (1024 * 1024)
+            ram_percent = (memory_mb / total_ram) * 100
+            self.ram_progress['value'] = ram_percent
+            
+            # Set color based on RAM usage
+            self._set_label_color(self.ram_label, ram_percent)
+            
+            # Get system-wide CPU and RAM usage
+            system_cpu = psutil.cpu_percent(interval=0)
+            self.system_cpu_var.set(f"{system_cpu:.1f}%")
+            
+            # Set color based on system CPU usage
+            self._set_label_color(self.system_cpu_label, system_cpu)
+            
+            system_ram = psutil.virtual_memory()
+            used_ram_gb = system_ram.used / (1024 * 1024 * 1024)
+            total_ram_gb = system_ram.total / (1024 * 1024 * 1024)
+            self.system_ram_var.set(f"{used_ram_gb:.1f} GB / {total_ram_gb:.1f} GB")
+            
+            # Set color based on system RAM usage percentage
+            system_ram_percent = system_ram.percent
+            self._set_label_color(self.system_ram_label, system_ram_percent)
+        except Exception as e:
+            logger.error(f"Error updating resource monitor: {e}")
+        
+        # Schedule next update
+        self.root.after(2000, self.update_resource_monitor)
+    
+    def _set_label_color(self, label, percent):
+        """Set label color based on usage percentage."""
+        if percent < 50:
+            label.configure(style="Green.TLabel")
+        elif percent < 80:
+            label.configure(style="Orange.TLabel")
+        else:
+            label.configure(style="Red.TLabel")
     
     def _show_disk_warning(self, free_space):
         """Show a warning dialog for critically low disk space."""
