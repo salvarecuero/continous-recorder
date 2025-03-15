@@ -10,12 +10,104 @@ logger = logging.getLogger("ContinuousRecorder")
 
 def get_pyaudio_instance():
     """Get a PyAudio instance with WASAPI support if available."""
+    logger.debug("Attempting to get PyAudio instance")
     try:
-        import pyaudiowpatch as pyaudio
-        return pyaudio.PyAudio(), True
-    except ImportError:
-        import pyaudio
-        return pyaudio.PyAudio(), False
+        logger.debug("Trying to import pyaudiowpatch")
+        try:
+            import pyaudiowpatch as pyaudio
+            logger.debug("Successfully imported pyaudiowpatch")
+            try:
+                logger.debug("Creating PyAudio instance with WASAPI support - STEP 1")
+                logger.debug("Calling pyaudio.PyAudio() constructor")
+                
+                # Use a timeout mechanism to prevent hanging
+                import threading
+                import queue
+                
+                def create_pyaudio():
+                    try:
+                        result_queue.put((pyaudio.PyAudio(), None))
+                    except Exception as e:
+                        result_queue.put((None, e))
+                
+                result_queue = queue.Queue()
+                thread = threading.Thread(target=create_pyaudio)
+                thread.daemon = True
+                thread.start()
+                
+                # Wait for result with timeout
+                try:
+                    result, error = result_queue.get(timeout=5.0)  # 5 second timeout
+                    if error:
+                        raise error
+                    if result is None:
+                        raise Exception("Failed to create PyAudio instance (unknown error)")
+                    
+                    logger.debug("Successfully created PyAudio instance with WASAPI support")
+                    return result, True
+                except queue.Empty:
+                    logger.error("Timeout while creating PyAudio instance with WASAPI")
+                    raise Exception("Timeout while creating PyAudio instance")
+                
+            except Exception as e:
+                logger.error(f"Error creating PyAudio instance with WASAPI: {e}")
+                import traceback
+                logger.error(f"Traceback: {traceback.format_exc()}")
+                raise
+        except ImportError as e:
+            logger.debug(f"pyaudiowpatch not available: {e}, falling back to standard pyaudio")
+            try:
+                logger.debug("Importing standard pyaudio")
+                import pyaudio
+                logger.debug("Successfully imported standard pyaudio")
+                try:
+                    logger.debug("Creating standard PyAudio instance - STEP 1")
+                    logger.debug("Calling pyaudio.PyAudio() constructor")
+                    
+                    # Use a timeout mechanism to prevent hanging
+                    import threading
+                    import queue
+                    
+                    def create_pyaudio():
+                        try:
+                            result_queue.put((pyaudio.PyAudio(), None))
+                        except Exception as e:
+                            result_queue.put((None, e))
+                    
+                    result_queue = queue.Queue()
+                    thread = threading.Thread(target=create_pyaudio)
+                    thread.daemon = True
+                    thread.start()
+                    
+                    # Wait for result with timeout
+                    try:
+                        result, error = result_queue.get(timeout=5.0)  # 5 second timeout
+                        if error:
+                            raise error
+                        if result is None:
+                            raise Exception("Failed to create PyAudio instance (unknown error)")
+                        
+                        logger.debug("Successfully created standard PyAudio instance")
+                        return result, False
+                    except queue.Empty:
+                        logger.error("Timeout while creating standard PyAudio instance")
+                        raise Exception("Timeout while creating PyAudio instance")
+                    
+                except Exception as e:
+                    logger.error(f"Error creating standard PyAudio instance: {e}")
+                    import traceback
+                    logger.error(f"Traceback: {traceback.format_exc()}")
+                    raise
+            except ImportError as e:
+                logger.error(f"Failed to import pyaudio: {e}")
+                import traceback
+                logger.error(f"Traceback: {traceback.format_exc()}")
+                raise
+    except Exception as e:
+        logger.error(f"Unexpected error in get_pyaudio_instance: {e}")
+        import traceback
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        raise
 
 def list_audio_devices(audio_instance):
     """List all available audio devices."""

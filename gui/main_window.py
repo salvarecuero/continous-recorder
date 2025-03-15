@@ -113,37 +113,73 @@ class RecorderGUI:
     
     def __init__(self, root):
         """Initialize the GUI."""
-        self.root = root
-        self.root.title("Continuous Audio Recorder")
-        
-        # Set icon if available
         try:
-            self.root.iconbitmap("recorder.ico")
-        except:
-            pass
-        
-        # Initialize recorder
-        self.recorder = AudioRecorder()
-        
-        # Create scrollable canvas
-        self.create_scrollable_frame()
-        
-        # Create GUI elements
-        self.create_widgets()
-        
-        # Setup update timer
-        self.update_status()
-        
-        # Handle window close
-        self.root.protocol("WM_DELETE_WINDOW", self.on_close)
-        
-        # Minimize to tray if configured
-        if self.recorder.config["general"]["minimize_to_tray"]:
-            self.setup_tray_icon()
-        
-        # Update window size after widgets are created
-        self.root.update()
-        self.adjust_window_size()
+            self.root = root
+            self.root.title("Continuous Audio Recorder")
+            self.log("GUI initialization started")
+            
+            # Set icon if available
+            try:
+                self.log("Setting window icon")
+                self.root.iconbitmap("recorder.ico")
+                self.log("Window icon set")
+            except Exception as e:
+                self.log(f"Failed to set icon: {e}")
+            
+            # Initialize recorder
+            self.log("Initializing audio recorder")
+            self.recorder = AudioRecorder()
+            self.log("Audio recorder initialized")
+            
+            # Create scrollable canvas
+            self.log("Creating scrollable frame")
+            self.create_scrollable_frame()
+            self.log("Scrollable frame created")
+            
+            # Create GUI elements
+            self.log("Creating widgets")
+            self.create_widgets()
+            self.log("Widgets created")
+            
+            # Setup update timer
+            self.log("Setting up status update timer")
+            self.update_status()
+            self.log("Status update timer set up")
+            
+            # Handle window close
+            self.log("Setting up window close handler")
+            self.root.protocol("WM_DELETE_WINDOW", self.on_close)
+            self.log("Window close handler set up")
+            
+            # Minimize to tray if configured
+            if self.recorder.config["general"]["minimize_to_tray"]:
+                self.log("Setting up tray icon")
+                self.setup_tray_icon()
+                self.log("Tray icon set up")
+            
+            # Update window size after widgets are created
+            self.log("Updating root window")
+            self.root.update()
+            self.log("Root window updated")
+            
+            self.log("Adjusting window size")
+            self.adjust_window_size()
+            self.log("Window size adjusted")
+            
+            self.log("Starting resource monitor")
+            self.start_resource_monitor()
+            self.log("Resource monitor started")
+            
+            self.log("GUI initialization completed")
+        except Exception as e:
+            if hasattr(self, 'log'):
+                self.log(f"Error during GUI initialization: {e}")
+                import traceback
+                self.log(f"Traceback: {traceback.format_exc()}")
+            else:
+                print(f"Error during GUI initialization (before log was available): {e}")
+                import traceback
+                print(f"Traceback: {traceback.format_exc()}")
     
     def create_scrollable_frame(self):
         """Create a scrollable frame for the application content."""
@@ -180,8 +216,19 @@ class RecorderGUI:
     
     def _update_scrollregion(self):
         """Update the scroll region of the canvas."""
-        self.canvas.configure(scrollregion=self.canvas.bbox("all"))
-        self._update_scrollbar_visibility()
+        self.log("Updating scroll region")
+        try:
+            self.log("Configuring canvas scrollregion")
+            self.canvas.configure(scrollregion=self.canvas.bbox("all"))
+            self.log("Canvas scrollregion configured")
+            
+            self.log("Updating scrollbar visibility")
+            self._update_scrollbar_visibility()
+            self.log("Scrollbar visibility updated")
+        except Exception as e:
+            self.log(f"Error in _update_scrollregion: {e}")
+            import traceback
+            self.log(f"Traceback: {traceback.format_exc()}")
     
     def _update_scrollbar(self, *args):
         """Update the scrollbar position."""
@@ -190,15 +237,30 @@ class RecorderGUI:
     
     def _update_scrollbar_visibility(self):
         """Show or hide scrollbar based on content height."""
-        # Get canvas and content heights
-        canvas_height = self.canvas.winfo_height()
-        content_height = self.scrollable_frame.winfo_reqheight()
-        
-        # Show scrollbar only if content is taller than canvas
-        if content_height > canvas_height:
-            self.scrollbar.pack(side="right", fill="y")
-        else:
-            self.scrollbar.pack_forget()
+        self.log("Updating scrollbar visibility")
+        try:
+            # Get canvas and content heights
+            self.log("Getting canvas height")
+            canvas_height = self.canvas.winfo_height()
+            self.log(f"Canvas height: {canvas_height}")
+            
+            self.log("Getting content height")
+            content_height = self.scrollable_frame.winfo_reqheight()
+            self.log(f"Content height: {content_height}")
+            
+            # Show scrollbar only if content is taller than canvas
+            self.log(f"Comparing heights: content {content_height} vs canvas {canvas_height}")
+            if content_height > canvas_height:
+                self.log("Content taller than canvas, showing scrollbar")
+                self.scrollbar.pack(side="right", fill="y")
+            else:
+                self.log("Content not taller than canvas, hiding scrollbar")
+                self.scrollbar.pack_forget()
+            self.log("Scrollbar visibility update complete")
+        except Exception as e:
+            self.log(f"Error in _update_scrollbar_visibility: {e}")
+            import traceback
+            self.log(f"Traceback: {traceback.format_exc()}")
     
     def on_canvas_resize(self, event):
         """Handle canvas resize event."""
@@ -238,45 +300,63 @@ class RecorderGUI:
     
     def adjust_window_size(self):
         """Adjust the window size based on content."""
-        # Update the scrollregion
-        self._update_scrollregion()
-        
-        # Get screen dimensions
-        screen_width = self.root.winfo_screenwidth()
-        screen_height = self.root.winfo_screenheight()
-        
-        # Calculate desired window size (80% of screen size)
-        desired_width = int(screen_width * 0.8)
-        desired_height = int(screen_height * 0.8)
-        
-        # Get the required size for the content
-        self.scrollable_frame.update_idletasks()
-        content_width = self.scrollable_frame.winfo_reqwidth()
-        content_height = self.scrollable_frame.winfo_reqheight()
-        
-        # Add padding for scrollbars and window decorations
-        padding_width = 50
-        padding_height = 50
-        
-        # Calculate window size
-        window_width = min(desired_width, content_width + padding_width)
-        window_height = min(desired_height, content_height + padding_height)
-        
-        # Ensure minimum size
-        window_width = max(window_width, 800)  # Minimum width of 800 pixels
-        window_height = max(window_height, 600)  # Minimum height of 600 pixels
-        
-        # Set window size
-        self.root.geometry(f"{window_width}x{window_height}")
-        
-        # Center window on screen
-        x = (screen_width - window_width) // 2
-        y = (screen_height - window_height) // 2
-        self.root.geometry(f"+{x}+{y}")
-        
-        # Update scrollregion again after resize
-        self.root.update_idletasks()
-        self._update_scrollregion()
+        self.log("Adjusting window size")
+        try:
+            # Update the scrollregion
+            self.log("Calling _update_scrollregion")
+            self._update_scrollregion()
+            self.log("Returned from _update_scrollregion")
+            
+            # Get screen dimensions
+            self.log("Getting screen dimensions")
+            screen_width = self.root.winfo_screenwidth()
+            screen_height = self.root.winfo_screenheight()
+            self.log(f"Screen dimensions: {screen_width}x{screen_height}")
+            
+            # Calculate desired window size (80% of screen size)
+            desired_width = int(screen_width * 0.8)
+            desired_height = int(screen_height * 0.8)
+            
+            # Get the required size for the content
+            self.log("Getting content size")
+            self.scrollable_frame.update_idletasks()
+            content_width = self.scrollable_frame.winfo_reqwidth()
+            content_height = self.scrollable_frame.winfo_reqheight()
+            self.log(f"Content size: {content_width}x{content_height}")
+            
+            # Add padding for scrollbars and window decorations
+            padding_width = 50
+            padding_height = 50
+            
+            # Calculate window size
+            window_width = min(desired_width, content_width + padding_width)
+            window_height = min(desired_height, content_height + padding_height)
+            
+            # Ensure minimum size
+            window_width = max(window_width, 800)  # Minimum width of 800 pixels
+            window_height = max(window_height, 600)  # Minimum height of 600 pixels
+            self.log(f"Calculated window size: {window_width}x{window_height}")
+            
+            # Set window size
+            self.log("Setting window geometry")
+            self.root.geometry(f"{window_width}x{window_height}")
+            
+            # Center window on screen
+            x = (screen_width - window_width) // 2
+            y = (screen_height - window_height) // 2
+            self.root.geometry(f"+{x}+{y}")
+            self.log(f"Window positioned at {x},{y}")
+            
+            # Update scrollregion again after resize
+            self.log("Updating idletasks")
+            self.root.update_idletasks()
+            self.log("Calling _update_scrollregion again")
+            self._update_scrollregion()
+            self.log("Window size adjustment complete")
+        except Exception as e:
+            self.log(f"Error in adjust_window_size: {e}")
+            import traceback
+            self.log(f"Traceback: {traceback.format_exc()}")
     
     def create_widgets(self):
         """Create the GUI widgets."""
@@ -535,9 +615,6 @@ class RecorderGUI:
         
         # Populate device list
         self.refresh_devices()
-        
-        # Start resource monitoring
-        self.start_resource_monitor()
     
     def _create_info_row(self, parent, label_text, var_name, default_value):
         """Create a row with a label and value in the info section."""
@@ -646,7 +723,7 @@ class RecorderGUI:
                     break
         
         # Log
-        self.log(f"Found {len(devices)} audio devices")
+        self.log(f"Found {len(devices)} audio devices XDDDD")
     
     def set_device(self):
         """Set the recording device."""
@@ -677,7 +754,17 @@ class RecorderGUI:
             # Reset the last update time to force update
             self.last_db_update = 0
             
-            # When not recording, get audio level from device directly
+            # Check if the device is still valid
+            device_valid = self.recorder.is_device_valid()
+            
+            if not device_valid:
+                self.db_meter.set_level(0)
+                self.db_level_var.set("-∞ dB")
+                # Handle invalid device
+                self._handle_invalid_device()
+                return
+            
+            # Device is valid, get the level
             level = self.recorder.get_device_level()
             
             # Update meter with the level
@@ -692,6 +779,12 @@ class RecorderGUI:
                 self.db_level_var.set("-∞ dB")
         except Exception as e:
             logger.error(f"Error forcing dB meter update: {e}")
+            # Set meter to zero in case of error
+            self.db_meter.set_level(0)
+            self.db_level_var.set("-∞ dB")
+            
+            # Try to handle the device error
+            self._handle_invalid_device()
     
     def _on_format_change(self, event):
         """Handle format selection changes."""
@@ -898,8 +991,9 @@ class RecorderGUI:
     def update_status(self):
         """Update status display."""
         try:
-            # Get recorder status - only do this every second to reduce overhead
             current_time = int(time.time())
+            
+            # Get recorder status - only do this every second to reduce overhead
             if not hasattr(self, 'last_status_update') or current_time - self.last_status_update >= 1:
                 self.last_status_update = current_time
                 status = self.recorder.get_status()
@@ -980,24 +1074,30 @@ class RecorderGUI:
                         self._show_disk_warning(free_space)
             
             # Update dB meter (every 200ms for better performance)
-            # Only update the dB meter if it's time
-            if not hasattr(self, 'last_db_update') or time.time() - self.last_db_update >= 0.2:
-                self.last_db_update = time.time()
+            current_time_ms = time.time()
+            if not hasattr(self, 'last_db_update') or current_time_ms - self.last_db_update >= 0.2:
+                self.last_db_update = current_time_ms
                 
                 # Always try to update the dB meter
                 try:
                     # Check if we're recording
                     if self.recorder.recording:
-                        # Get audio level using the recording method
-                        rms, db, level = self.recorder.get_audio_level()
-                        
-                        if rms > 0:
-                            # Update meter
-                            self.db_meter.set_level(level)
+                        try:
+                            # Get audio level using the recording method
+                            rms, db, level = self.recorder.get_audio_level()
                             
-                            # Update dB text
-                            self.db_level_var.set(f"{db:.1f} dB")
-                        else:
+                            if rms > 0:
+                                # Update meter
+                                self.db_meter.set_level(level)
+                                
+                                # Update dB text
+                                self.db_level_var.set(f"{db:.1f} dB")
+                            else:
+                                self.db_meter.set_level(0)
+                                self.db_level_var.set("-∞ dB")
+                        except Exception as e:
+                            # Log the error but don't crash
+                            logger.error(f"Error getting audio level during recording: {e}")
                             self.db_meter.set_level(0)
                             self.db_level_var.set("-∞ dB")
                     else:
@@ -1014,6 +1114,12 @@ class RecorderGUI:
                             self.db_level_var.set(f"{db:.1f} dB")
                         else:
                             self.db_level_var.set("-∞ dB")
+                            
+                            # Check device validity occasionally when we get a zero level
+                            if not hasattr(self, 'last_zero_check') or current_time_ms - self.last_zero_check >= 5.0:
+                                self.last_zero_check = current_time_ms
+                                if not self.recorder.is_device_valid():
+                                    self._handle_invalid_device()
                 except Exception as e:
                     # Log the error but don't crash
                     logger.error(f"Error updating dB meter: {e}")
@@ -1029,11 +1135,14 @@ class RecorderGUI:
     
     def start_resource_monitor(self):
         """Start monitoring system resources."""
-        # Get process
-        self.process = psutil.Process()
-        
-        # Update resources
-        self.update_resource_monitor()
+        try:
+            # Get process
+            self.process = psutil.Process()
+            
+            # Update resources
+            self.update_resource_monitor()
+        except Exception as e:
+            logger.error(f"Error in start_resource_monitor: {e}")
     
     def update_resource_monitor(self):
         """Update resource monitor display."""
@@ -1103,9 +1212,15 @@ class RecorderGUI:
         timestamp = time.strftime("%H:%M:%S")
         log_message = f"[{timestamp}] {message}\n"
         
-        # Add to log
-        self.log_text.insert(tk.END, log_message)
-        self.log_text.see(tk.END)
+        # Add to log text widget if it exists
+        if hasattr(self, 'log_text') and self.log_text is not None:
+            try:
+                self.log_text.insert(tk.END, log_message)
+                self.log_text.see(tk.END)
+            except Exception as e:
+                print(f"Error writing to log_text: {e}")
+        else:
+            print(log_message.strip())  # Print to console if log_text doesn't exist yet
         
         # Log to logger
         logger.info(message)
@@ -1223,6 +1338,80 @@ class RecorderGUI:
                 self.retention_fit_label.configure(style="Red.TLabel")
         except Exception as e:
             logger.error(f"Error updating folder stats: {e}")
+    
+    def _handle_invalid_device(self):
+        """Handle the case where the device is invalid or unavailable.
+        
+        This method will show a message to the user and reset the device selection.
+        It will also try to select an alternative device automatically.
+        """
+        # Only show the message once per session
+        if not hasattr(self, '_device_error_shown') or not self._device_error_shown:
+            self._device_error_shown = True
+            
+            # Try to select an alternative device
+            if self._try_select_alternative_device():
+                return
+            
+            # If we couldn't select an alternative device, show a message
+            # Show message in a non-blocking way
+            self.root.after(100, lambda: messagebox.showwarning(
+                "Audio Device Error",
+                "The selected audio device is no longer available or is invalid.\n\n"
+                "This could be because the device was disconnected, is being used by another application, "
+                "or there was a system change.\n\n"
+                "Please select a different audio device from the list."
+            ))
+            
+            # Reset device selection in the UI
+            self.device_var.set("No device selected")
+            
+            # Log the event
+            logger.info("Audio device is invalid or unavailable, user notification shown")
+    
+    def _try_select_alternative_device(self):
+        """Try to select an alternative device if the current one is invalid.
+        
+        This method will try to find a working device and select it automatically.
+        
+        Returns:
+            bool: True if a working device was found and set, False otherwise
+        """
+        logger.info("Trying to select an alternative device")
+        
+        # Use the new find_working_device method
+        if self.recorder.find_working_device():
+            # Get the new device info
+            device_index = self.recorder.device_index
+            device_info = self.recorder.get_device_info()
+            device_name = device_info["name"] if device_info else "Unknown device"
+            
+            logger.info(f"New device selected: {device_name} (index {device_index})")
+            
+            # Update the device selection in the UI
+            for name, index in self.device_map.items():
+                if index == device_index:
+                    self.device_list.set(name)
+                    self.device_var.set(device_name)
+                    break
+            
+            # Show a message to the user
+            self.root.after(100, lambda: messagebox.showinfo(
+                "Device Changed",
+                f"The previous audio device was unavailable.\n\n"
+                f"The application has automatically switched to: {device_name}"
+            ))
+            
+            # Reset the device error flag
+            self._device_error_shown = False
+            
+            return True
+        
+        # If we couldn't find a working device, refresh the device list in the UI
+        self.refresh_devices()
+        
+        logger.warning("No working devices found")
+        return False
 
 def main():
     """Main entry point for the GUI."""

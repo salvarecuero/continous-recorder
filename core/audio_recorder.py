@@ -13,6 +13,7 @@ import threading
 import datetime
 import numpy as np
 import wave
+import psutil
 
 from config.settings import load_config, save_config
 from utils.audio_utils import get_pyaudio_instance, list_audio_devices, convert_to_mp3
@@ -34,37 +35,53 @@ class AudioRecorder:
     
     def __init__(self, config_path="config.ini"):
         """Initialize the recorder with configuration."""
-        self.config = load_config(config_path)
-        self.config_path = config_path
-        self.recording = False
-        self.paused = False
-        self.audio = None
-        self.stream = None
-        self.current_file = None
-        self.current_wave = None
-        self.audio_queue = queue.Queue()
-        self.record_thread = None
-        self.process_thread = None
-        self.cleanup_thread = None
-        self.device_index = self._get_device_index()
-        self.pid = os.getpid()
-        self.recording_start_time = None
-        self.monitor_stream = None
-        self.monitor_thread = None
-        self.current_block_size = 0  # Track current block size
-        
-        # Create base recordings directory
-        os.makedirs(self.config["paths"]["recordings_dir"], exist_ok=True)
-        
-        # Register signal handlers for graceful shutdown
-        signal.signal(signal.SIGINT, self._signal_handler)
-        signal.signal(signal.SIGTERM, self._signal_handler)
-        
-        # Register cleanup function
-        atexit.register(self._cleanup_lock)
-        
-        # Display current configuration
-        self.display_configuration()
+        logger.info("Initializing AudioRecorder")
+        try:
+            logger.debug(f"Loading configuration from {config_path}")
+            self.config = load_config(config_path)
+            self.config_path = config_path
+            self.recording = False
+            self.paused = False
+            self.audio = None
+            self.stream = None
+            self.current_file = None
+            self.current_wave = None
+            self.audio_queue = queue.Queue()
+            self.record_thread = None
+            self.process_thread = None
+            self.cleanup_thread = None
+            
+            logger.debug("Getting device index")
+            self.device_index = self._get_device_index()
+            logger.debug(f"Device index set to: {self.device_index}")
+            
+            self.pid = os.getpid()
+            self.recording_start_time = None
+            self.monitor_stream = None
+            self.monitor_thread = None
+            self.current_block_size = 0  # Track current block size
+            
+            # Create base recordings directory
+            logger.debug(f"Creating recordings directory: {self.config['paths']['recordings_dir']}")
+            os.makedirs(self.config["paths"]["recordings_dir"], exist_ok=True)
+            
+            # Register signal handlers for graceful shutdown
+            logger.debug("Registering signal handlers")
+            signal.signal(signal.SIGINT, self._signal_handler)
+            signal.signal(signal.SIGTERM, self._signal_handler)
+            
+            # Register cleanup function
+            logger.debug("Registering cleanup function")
+            atexit.register(self._cleanup_lock)
+            
+            # Display current configuration
+            logger.debug("Displaying configuration")
+            self.display_configuration()
+            
+            logger.info("AudioRecorder initialized successfully")
+        except Exception as e:
+            logger.error(f"Error initializing AudioRecorder: {e}")
+            raise
     
     def _save_config(self):
         """Save configuration to file."""
@@ -200,51 +217,86 @@ class AudioRecorder:
     
     def start_recording(self):
         """Start the recording process."""
+        logger.info("Starting recording process...")
         if self.recording:
             logger.warning("Recording is already in progress")
             return False
         
         # Check if another instance is already recording
+        logger.debug("Checking for other recording instances...")
         if self._check_lock():
             logger.error("Another instance is already recording")
             return False
         
         # Create lock file
+        logger.debug("Creating lock file...")
         self._create_lock()
         
         # Initialize PyAudio
+        logger.debug("Initializing PyAudio...")
         if self.audio is None:
             self.audio = self._get_pyaudio_instance()
         
+        # Ensure we have a valid device
+        logger.debug("Checking device index...")
+        if self.device_index is None:
+            logger.debug("No device index set, attempting to find one...")
+            self.device_index = self._get_device_index(force_refresh=True)
+            if self.device_index is None:
+                logger.error("No valid recording device found. Cannot start recording.")
+                self._cleanup_lock()
+                return False
+        
+        # Validate device exists
+        logger.debug(f"Validating device index {self.device_index}...")
+        try:
+            device_info = self.audio.get_device_info_by_index(self.device_index)
+            logger.info(f"Using device: {device_info['name']}")
+        except Exception as e:
+            logger.error(f"Invalid device index {self.device_index}: {e}")
+            # Try to get a valid device
+            logger.debug("Attempting to find a new valid device...")
+            self.device_index = self._get_device_index(force_refresh=True)
+            if self.device_index is None:
+                logger.error("Could not find a valid recording device. Cannot start recording.")
+                self._cleanup_lock()
+                return False
+        
         # Display current configuration
+        logger.debug("Displaying configuration...")
         self.display_configuration()
         
         # Start recording
+        logger.debug("Setting recording flags...")
         self.recording = True
         self.paused = False
         
         # Start record thread
+        logger.debug("Starting record thread...")
         self.record_thread = threading.Thread(target=self._record_audio)
         self.record_thread.daemon = True
         self.record_thread.start()
         
         # Start process thread
+        logger.debug("Starting process thread...")
         self.process_thread = threading.Thread(target=self._process_audio)
         self.process_thread.daemon = True
         self.process_thread.start()
         
         # Start cleanup thread
+        logger.debug("Starting cleanup thread...")
         self.cleanup_thread = threading.Thread(target=self._run_cleanup_thread)
         self.cleanup_thread.daemon = True
         self.cleanup_thread.start()
         
         # Start monitor
+        logger.debug("Starting audio monitor...")
         self._start_monitor()
         
         # Update recording start time
         self.recording_start_time = time.time()
         
-        logger.info("Recording started")
+        logger.info("Recording started successfully")
         return True
     
     def stop_recording(self):
@@ -401,30 +453,51 @@ class AudioRecorder:
         time_diff = block_end_time - now
         return time_diff.total_seconds()
     
-    def _get_device_index(self):
+    def _get_device_index(self, force_refresh=False):
         """Get the index of the recording device."""
+        logger.info(f"Getting device index (force_refresh={force_refresh})")
+        
         # Use configured device if available
-        if self.config["audio"]["device_index"] is not None:
-            return self.config["audio"]["device_index"]
+        if self.config["audio"]["device_index"] is not None and not force_refresh:
+            logger.debug(f"Using configured device index: {self.config['audio']['device_index']}")
+            # Validate the configured device
+            try:
+                logger.debug("Validating configured device")
+                audio = self._get_pyaudio_instance()
+                device_info = audio.get_device_info_by_index(self.config["audio"]["device_index"])
+                logger.debug(f"Validated device: {device_info['name']}")
+                audio.terminate()
+                return self.config["audio"]["device_index"]
+            except Exception as e:
+                logger.warning(f"Configured device index {self.config['audio']['device_index']} is invalid: {e}")
+                # Continue to find a new device
         
         # Get PyAudio instance
+        logger.debug("Getting PyAudio instance")
         audio, has_wasapi = get_pyaudio_instance()
+        logger.debug(f"Got PyAudio instance, WASAPI available: {has_wasapi}")
         
         # Find loopback device if WASAPI is available
         if has_wasapi:
+            logger.debug("Searching for WASAPI loopback devices")
             try:
                 # Get device count
                 device_count = audio.get_device_count()
+                logger.debug(f"Found {device_count} audio devices")
                 
                 # Find loopback device
                 for i in range(device_count):
                     try:
+                        logger.debug(f"Checking device {i}")
                         device_info = audio.get_device_info_by_index(i)
                         
                         # Check if device is a loopback device
+                        logger.debug(f"Checking if device {i} is a loopback device")
                         if audio.is_loopback(i):
+                            logger.debug(f"Device {i} is a loopback device: {device_info['name']}")
                             # Check if device is the default output device
                             try:
+                                logger.debug("Checking if device is the default output device")
                                 default_output = audio.get_default_output_device_info()
                                 if device_info["name"] == default_output["name"]:
                                     logger.info(f"Using default output loopback device: {device_info['name']}")
@@ -432,8 +505,8 @@ class AudioRecorder:
                                     self._save_config()
                                     audio.terminate()
                                     return i
-                            except:
-                                pass
+                            except Exception as e:
+                                logger.debug(f"Error checking default output: {e}")
                             
                             # Use first loopback device
                             logger.info(f"Using loopback device: {device_info['name']}")
@@ -441,12 +514,15 @@ class AudioRecorder:
                             self._save_config()
                             audio.terminate()
                             return i
-                    except:
-                        pass
+                    except Exception as e:
+                        logger.debug(f"Error checking device {i}: {e}")
+                
+                logger.debug("No suitable loopback devices found")
             except Exception as e:
                 logger.error(f"Error finding loopback device: {e}")
         
         # Use default input device
+        logger.debug("Trying to use default input device")
         try:
             device_info = audio.get_default_input_device_info()
             logger.info(f"Using default input device: {device_info['name']}")
@@ -454,10 +530,33 @@ class AudioRecorder:
             self._save_config()
             audio.terminate()
             return device_info["index"]
-        except:
-            pass
+        except Exception as e:
+            logger.error(f"Error getting default input device: {e}")
+        
+        # Try to find any available input device
+        logger.debug("Searching for any available input device")
+        try:
+            device_count = audio.get_device_count()
+            logger.debug(f"Found {device_count} audio devices")
+            for i in range(device_count):
+                try:
+                    logger.debug(f"Checking input device {i}")
+                    device_info = audio.get_device_info_by_index(i)
+                    if device_info["maxInputChannels"] > 0:
+                        logger.info(f"Using input device: {device_info['name']}")
+                        self.config["audio"]["device_index"] = i
+                        self._save_config()
+                        audio.terminate()
+                        return i
+                except Exception as e:
+                    logger.debug(f"Error checking input device {i}: {e}")
+            
+            logger.debug("No suitable input devices found")
+        except Exception as e:
+            logger.error(f"Error finding any input device: {e}")
         
         # Clean up
+        logger.debug("Terminating PyAudio instance")
         audio.terminate()
         
         logger.warning("No suitable recording device found")
@@ -488,8 +587,14 @@ class AudioRecorder:
     
     def _get_pyaudio_instance(self):
         """Get a PyAudio instance."""
-        audio, _ = get_pyaudio_instance()
-        return audio
+        logger.debug("Getting PyAudio instance")
+        try:
+            audio, _ = get_pyaudio_instance()
+            logger.debug("PyAudio instance created successfully")
+            return audio
+        except Exception as e:
+            logger.error(f"Error creating PyAudio instance: {e}")
+            raise
     
     def _signal_handler(self, sig, frame):
         """Handle signals for graceful shutdown."""
@@ -505,28 +610,27 @@ class AudioRecorder:
         # Check if lock file exists
         if os.path.exists(lock_file):
             try:
-                # Read lock file
+                # Read PID from lock file
                 with open(lock_file, "r") as f:
                     pid = int(f.read().strip())
                 
                 # Check if process is running
-                if pid == self.pid:
-                    # This is our lock file
-                    return False
+                if psutil.pid_exists(pid):
+                    # Process is running, check if it's a recorder
+                    try:
+                        process = psutil.Process(pid)
+                        if "python" in process.name().lower():
+                            # It's a Python process, likely a recorder
+                            return True
+                    except:
+                        # Process exists but we can't access it
+                        return True
                 
-                # Check if process exists
-                try:
-                    os.kill(pid, 0)
-                    # Process exists
-                    return True
-                except OSError:
-                    # Process doesn't exist
-                    logger.warning(f"Removing stale lock file for PID {pid}")
-                    os.remove(lock_file)
-                    return False
-            except Exception as e:
-                logger.error(f"Error checking lock file: {e}")
-                # Remove lock file
+                # Process is not running, remove stale lock file
+                os.remove(lock_file)
+                return False
+            except:
+                # Error reading lock file, assume it's stale
                 try:
                     os.remove(lock_file)
                 except:
@@ -543,10 +647,10 @@ class AudioRecorder:
         # Create lock file
         try:
             with open(lock_file, "w") as f:
-                f.write(str(self.pid))
-            logger.debug(f"Created lock file with PID {self.pid}")
-        except Exception as e:
-            logger.error(f"Error creating lock file: {e}")
+                f.write(str(os.getpid()))
+            return True
+        except:
+            return False
     
     def _cleanup_lock(self):
         """Remove the lock file."""
@@ -556,17 +660,19 @@ class AudioRecorder:
         # Check if lock file exists
         if os.path.exists(lock_file):
             try:
-                # Read lock file
+                # Read PID from lock file
                 with open(lock_file, "r") as f:
                     pid = int(f.read().strip())
                 
-                # Check if this is our lock file
-                if pid == self.pid:
-                    # Remove lock file
+                # Only remove if it's our lock
+                if pid == os.getpid():
                     os.remove(lock_file)
-                    logger.debug(f"Removed lock file for PID {self.pid}")
-            except Exception as e:
-                logger.error(f"Error removing lock file: {e}")
+                    return True
+            except:
+                # Error reading lock file, don't remove it
+                pass
+        
+        return False
     
     def _send_command(self, command):
         """Send a command to another instance."""
@@ -577,10 +683,8 @@ class AudioRecorder:
         try:
             with open(cmd_file, "w") as f:
                 f.write(command)
-            logger.debug(f"Sent command: {command}")
             return True
-        except Exception as e:
-            logger.error(f"Error sending command: {e}")
+        except:
             return False
     
     def _check_command(self):
@@ -591,7 +695,7 @@ class AudioRecorder:
         # Check if command file exists
         if os.path.exists(cmd_file):
             try:
-                # Read command file
+                # Read command from file
                 with open(cmd_file, "r") as f:
                     command = f.read().strip()
                 
@@ -600,54 +704,96 @@ class AudioRecorder:
                 
                 # Process command
                 if command == "stop":
-                    logger.info("Received stop command")
                     self.stop_recording()
+                    return True
                 elif command == "pause":
-                    logger.info("Received pause command")
-                    self.paused = True
+                    self.pause_recording()
+                    return True
                 elif command == "resume":
-                    logger.info("Received resume command")
-                    self.paused = False
-                
-                return command
-            except Exception as e:
-                logger.error(f"Error checking command: {e}")
+                    self.resume_recording()
+                    return True
+            except:
+                # Error reading command file
+                try:
+                    os.remove(cmd_file)
+                except:
+                    pass
         
-        return None
+        return False
     
     def _record_audio(self):
         """Record audio from the selected device."""
+        logger.info("Record thread started")
         try:
             # Initialize visualization buffer
+            logger.debug("Initializing visualization buffer")
             self._viz_buffer = bytearray()
             self._viz_buffer_size = self.config["audio"]["sample_rate"] * 2 * 0.1  # 100ms of audio
             
+            # Validate device index
+            logger.debug(f"Validating device index: {self.device_index}")
+            if self.device_index is None:
+                logger.error("No valid recording device selected")
+                self.recording = False
+                return
+                
+            # Verify device exists
+            logger.debug(f"Verifying device {self.device_index} exists")
+            try:
+                device_info = self.audio.get_device_info_by_index(self.device_index)
+                logger.debug(f"Using device: {device_info['name']}")
+            except Exception as e:
+                logger.error(f"Invalid device index {self.device_index}: {e}")
+                # Try to get a valid device
+                logger.debug("Attempting to find a valid device")
+                self.device_index = self._get_device_index(force_refresh=True)
+                if self.device_index is None:
+                    logger.error("Could not find a valid recording device")
+                    self.recording = False
+                    return
+            
             # Open stream
+            logger.debug(f"Opening audio stream with device {self.device_index}")
             if HAS_WASAPI and hasattr(self.audio, "is_loopback") and self.audio.is_loopback(self.device_index):
                 # Open loopback stream
-                self.stream = self.audio.open(
-                    format=pyaudio.paInt16,
-                    channels=self.config["audio"]["channels"],
-                    rate=self.config["audio"]["sample_rate"],
-                    frames_per_buffer=self.config["audio"]["chunk_size"],
-                    input=True,
-                    input_device_index=self.device_index,
-                    as_loopback=True
-                )
+                logger.debug("Opening WASAPI loopback stream")
+                try:
+                    self.stream = self.audio.open(
+                        format=pyaudio.paInt16,
+                        channels=self.config["audio"]["channels"],
+                        rate=self.config["audio"]["sample_rate"],
+                        frames_per_buffer=self.config["audio"]["chunk_size"],
+                        input=True,
+                        input_device_index=self.device_index,
+                        as_loopback=True
+                    )
+                    logger.debug("WASAPI loopback stream opened successfully")
+                except Exception as e:
+                    logger.error(f"Failed to open WASAPI loopback stream: {e}")
+                    self.recording = False
+                    return
             else:
                 # Open regular stream
-                self.stream = self.audio.open(
-                    format=pyaudio.paInt16,
-                    channels=self.config["audio"]["channels"],
-                    rate=self.config["audio"]["sample_rate"],
-                    frames_per_buffer=self.config["audio"]["chunk_size"],
-                    input=True,
-                    input_device_index=self.device_index
-                )
+                logger.debug("Opening regular input stream")
+                try:
+                    self.stream = self.audio.open(
+                        format=pyaudio.paInt16,
+                        channels=self.config["audio"]["channels"],
+                        rate=self.config["audio"]["sample_rate"],
+                        frames_per_buffer=self.config["audio"]["chunk_size"],
+                        input=True,
+                        input_device_index=self.device_index
+                    )
+                    logger.debug("Regular input stream opened successfully")
+                except Exception as e:
+                    logger.error(f"Failed to open regular input stream: {e}")
+                    self.recording = False
+                    return
             
-            logger.debug(f"Opened audio stream with device {self.device_index}")
+            logger.info(f"Audio stream opened with device {self.device_index}")
             
             # Record audio
+            logger.debug("Starting audio recording loop")
             while self.recording:
                 # Check for commands
                 self._check_command()
@@ -659,7 +805,9 @@ class AudioRecorder:
                 
                 # Read audio data
                 try:
+                    logger.debug("Reading audio chunk")
                     data = self.stream.read(self.config["audio"]["chunk_size"])
+                    logger.debug(f"Read {len(data)} bytes of audio data")
                     
                     # Convert to mono if needed
                     if self.config["audio"]["mono"] and self.config["audio"]["channels"] > 1:
@@ -687,14 +835,26 @@ class AudioRecorder:
                     time.sleep(0.1)
             
             # Close stream
-            self.stream.stop_stream()
-            self.stream.close()
-            self.stream = None
+            logger.debug("Closing audio stream")
+            if self.stream is not None:
+                try:
+                    logger.debug("Stopping stream")
+                    self.stream.stop_stream()
+                    logger.debug("Closing stream")
+                    self.stream.close()
+                    logger.debug("Closed audio stream")
+                except Exception as e:
+                    logger.error(f"Error closing audio stream: {e}")
+                finally:
+                    self.stream = None
+            else:
+                logger.debug("No audio stream to close")
             
-            logger.debug("Closed audio stream")
         except Exception as e:
             logger.error(f"Error in record thread: {e}")
             self.recording = False
+        
+        logger.info("Record thread finished")
     
     def _process_audio(self):
         """Process audio data from the queue."""
@@ -1068,6 +1228,7 @@ class AudioRecorder:
         """
         # Check if we're recording and have data
         if not self.recording or not hasattr(self, '_viz_buffer') or len(self._viz_buffer) == 0:
+            logger.debug("Not recording or no visualization buffer available")
             return (0, -60, 0)
         
         # Check if we need to recalculate (cache results to avoid recalculating too often)
@@ -1079,6 +1240,7 @@ class AudioRecorder:
         
         try:
             # Convert to numpy array
+            logger.debug(f"Processing visualization buffer of size {len(self._viz_buffer)}")
             samples = np.frombuffer(self._viz_buffer, dtype=np.int16)
             
             # Calculate RMS value
@@ -1115,108 +1277,394 @@ class AudioRecorder:
             return (0, -60, 0)
         except Exception as e:
             logger.error(f"Error getting audio level: {e}")
+            import traceback
+            logger.debug(f"Traceback: {traceback.format_exc()}")
+            # Return safe default values
             return (0, -60, 0)
     
     def get_device_level(self):
-        """Get the current audio level from the device even when not recording.
+        """Get the current audio level from the device.
+        
+        This method will attempt to get the audio level from the device.
+        If the device is not available or there is an error, it will return 0.
         
         Returns:
-            float: Audio level normalized between 0 and 1
+            float: Audio level from 0 to 1
         """
-        if self.device_index is None:
-            return 0
+        # Cache device level results to avoid frequent checks
+        cache_key = "device_level"
+        current_time = time.time()
+        
+        # If we have a cached result that's less than 0.1 seconds old, use it
+        if hasattr(self, cache_key) and current_time - getattr(self, f"{cache_key}_time") < 0.1:
+            return getattr(self, cache_key)
             
-        try:
-            # Create a temporary stream to get audio data
-            pa = get_pyaudio_instance()[0]  # Get the first element (the PyAudio instance)
-            
-            # Get device info
-            device_info = pa.get_device_info_by_index(self.device_index)
-            sample_rate = int(device_info.get('defaultSampleRate', 44100))
-            channels = device_info.get('maxInputChannels', 1)
-            
-            # Create a short stream to get a sample
-            stream = None
+        # Use a queue to get the result from the thread
+        result_queue = queue.Queue()
+        
+        # Define the thread function
+        def _get_level_thread():
             try:
-                # Use WASAPI loopback if available and device is a loopback device
-                if HAS_WASAPI and self._is_loopback_device(self.device_index):
-                    stream = pa.open(
-                        format=pyaudio.paInt16,
-                        channels=channels,
-                        rate=sample_rate,
-                        input=True,
-                        input_device_index=self.device_index,
-                        frames_per_buffer=1024,
-                        as_loopback=True
-                    )
-                else:
-                    stream = pa.open(
-                        format=pyaudio.paInt16,
-                        channels=channels,
-                        rate=sample_rate,
-                        input=True,
-                        input_device_index=self.device_index,
-                        frames_per_buffer=1024
-                    )
+                # Get PyAudio instance
+                audio, has_wasapi = get_pyaudio_instance()
                 
-                # Read a small chunk of data
-                data = stream.read(1024, exception_on_overflow=False)
+                # Get device info
+                try:
+                    device_info = audio.get_device_info_by_index(self.device_index)
+                except Exception as e:
+                    logger.error(f"Error getting device info: {e}")
+                    result_queue.put(0)
+                    audio.terminate()
+                    return
+                
+                # Open stream
+                try:
+                    stream = audio.open(
+                        format=pyaudio.paInt16,
+                        channels=int(device_info["maxInputChannels"]),
+                        rate=int(device_info["defaultSampleRate"]),
+                        input=True,
+                        frames_per_buffer=1024,
+                        input_device_index=self.device_index
+                    )
+                except Exception as e:
+                    logger.error(f"Error opening stream: {e}")
+                    result_queue.put(0)
+                    audio.terminate()
+                    return
+                
+                # Read data
+                try:
+                    data = stream.read(1024, exception_on_overflow=False)
+                except Exception as e:
+                    logger.error(f"Error reading data: {e}")
+                    try:
+                        stream.close()
+                    except:
+                        pass
+                    audio.terminate()
+                    result_queue.put(0)
+                    return
+                
+                # Close stream
+                try:
+                    stream.close()
+                except Exception as e:
+                    logger.error(f"Error closing stream: {e}")
+                
+                # Terminate PyAudio
+                try:
+                    audio.terminate()
+                except Exception as e:
+                    logger.error(f"Error terminating PyAudio: {e}")
                 
                 # Convert to numpy array
-                samples = np.frombuffer(data, dtype=np.int16)
+                try:
+                    audio_data = np.frombuffer(data, dtype=np.int16)
+                except Exception as e:
+                    logger.error(f"Error converting to numpy array: {e}")
+                    result_queue.put(0)
+                    return
                 
                 # Convert to mono if needed
-                if channels > 1:
-                    samples = samples.reshape(-1, channels)
-                    samples = samples.mean(axis=1)
-                
-                # Calculate RMS value
-                rms = np.sqrt(np.mean(samples.astype(np.float32)**2))
-                
-                # Convert to dB (relative to full scale)
-                if rms > 0:
-                    db = 20 * np.log10(rms / 32768)
-                    db = max(-60, min(0, db))  # Clamp between -60 and 0 dB
+                try:
+                    if len(audio_data) == 0:
+                        logger.warning("Empty audio data")
+                        result_queue.put(0)
+                        return
                     
-                    # Convert to 0-1 range for meter
-                    level = (db + 60) / 60
-                    
-                    # Log occasionally for debugging
-                    current_time = time.time()
-                    if not hasattr(self, '_last_device_level_log') or current_time - self._last_device_level_log > 1.0:
-                        self._last_device_level_log = current_time
-                        logger.debug(f"Device level: RMS={rms:.2f}, dB={db:.2f}, level={level:.2f}")
-                    
-                    return level
+                    channels = int(device_info["maxInputChannels"])
+                    if channels > 1:
+                        # Reshape and average across channels
+                        audio_data = audio_data.reshape(-1, channels)
+                        audio_data = np.mean(audio_data, axis=1)
+                except Exception as e:
+                    logger.error(f"Error converting to mono: {e}")
+                    result_queue.put(0)
+                    return
                 
-                return 0
-            finally:
-                # Close stream
-                if stream:
-                    stream.stop_stream()
-                    stream.close()
+                # Calculate RMS
+                try:
+                    rms = np.sqrt(np.mean(np.square(audio_data)))
+                except Exception as e:
+                    logger.error(f"Error calculating RMS: {e}")
+                    result_queue.put(0)
+                    return
                 
-                # Terminate PyAudio instance
-                pa.terminate()
+                # Convert to dB and normalize to 0-1 range
+                try:
+                    if rms > 0:
+                        db = 20 * np.log10(rms / 32767)
+                        # Normalize to 0-1 range (assuming -60dB to 0dB range)
+                        level = (db + 60) / 60
+                        level = max(0, min(1, level))
+                    else:
+                        level = 0
+                except Exception as e:
+                    logger.error(f"Error converting to dB: {e}")
+                    result_queue.put(0)
+                    return
                 
+                # Put the result in the queue
+                result_queue.put(level)
+            except Exception as e:
+                logger.error(f"Unexpected error in _get_level_thread: {e}")
+                # Make sure we always put something in the queue
+                result_queue.put(0)
+        
+        # Start the thread
+        thread = threading.Thread(target=_get_level_thread)
+        thread.daemon = True
+        thread.start()
+        
+        try:
+            # Wait for the result with a timeout
+            level = result_queue.get(timeout=2)
+            
+            # Cache the result
+            setattr(self, cache_key, level)
+            setattr(self, f"{cache_key}_time", current_time)
+            
+            return level
+        except queue.Empty:
+            logger.warning("Timeout getting device level")
+            
+            # Cache the result
+            setattr(self, cache_key, 0)
+            setattr(self, f"{cache_key}_time", current_time)
+            
+            return 0
         except Exception as e:
-            logger.debug(f"Error getting device level: {e}")
+            logger.error(f"Error getting result from queue: {e}")
+            
+            # Cache the result
+            setattr(self, cache_key, 0)
+            setattr(self, f"{cache_key}_time", current_time)
+            
             return 0
     
-    def _is_loopback_device(self, device_index):
-        """Check if a device is a loopback device."""
-        if not HAS_WASAPI:
+    def is_device_valid(self, device_index=None):
+        """Check if the device is valid and available.
+        
+        This method will check if the device is valid by:
+        1. Checking if the device index is valid
+        2. Checking if the device info can be retrieved
+        3. Checking if a stream can be opened
+        4. Checking if data can be read from the stream
+        
+        Args:
+            device_index (int, optional): Device index to check. Defaults to None (current device).
+            
+        Returns:
+            bool: True if the device is valid, False otherwise
+        """
+        # Use current device if not specified
+        if device_index is None:
+            device_index = self.device_index
+        
+        # Check if device index is valid
+        if device_index is None:
+            logger.debug("No device selected")
             return False
+            
+        # Cache device validity results to avoid frequent checks
+        cache_key = f"device_valid_{device_index}"
+        current_time = time.time()
+        
+        # If we have a cached result that's less than 5 seconds old, use it
+        if hasattr(self, cache_key) and current_time - getattr(self, f"{cache_key}_time") < 5.0:
+            return getattr(self, cache_key)
+        
+        # Use a queue to get the result from the thread
+        result_queue = queue.Queue()
+        
+        # Define the thread function
+        def _check_device_thread():
+            try:
+                # Get PyAudio instance
+                audio, has_wasapi = get_pyaudio_instance()
+                
+                # Try to get device info
+                try:
+                    device_info = audio.get_device_info_by_index(device_index)
+                except Exception as e:
+                    logger.error(f"Error getting device info: {e}")
+                    result_queue.put(False)
+                    audio.terminate()
+                    return
+                
+                # Try to open a stream
+                stream = None
+                try:
+                    stream = audio.open(
+                        format=pyaudio.paInt16,
+                        channels=int(device_info["maxInputChannels"]),
+                        rate=int(device_info["defaultSampleRate"]),
+                        input=True,
+                        frames_per_buffer=1024,
+                        input_device_index=device_index
+                    )
+                except Exception as e:
+                    logger.error(f"Error opening stream: {e}")
+                    result_queue.put(False)
+                    audio.terminate()
+                    return
+                
+                # Try to read data
+                try:
+                    data = stream.read(1024, exception_on_overflow=False)
+                except Exception as e:
+                    logger.error(f"Error reading data: {e}")
+                    try:
+                        stream.close()
+                    except:
+                        pass
+                    audio.terminate()
+                    result_queue.put(False)
+                    return
+                
+                # Close stream
+                try:
+                    stream.close()
+                except Exception as e:
+                    logger.error(f"Error closing stream: {e}")
+                
+                # Terminate PyAudio
+                try:
+                    audio.terminate()
+                except Exception as e:
+                    logger.error(f"Error terminating PyAudio: {e}")
+                
+                # Device is valid
+                result_queue.put(True)
+            except Exception as e:
+                logger.error(f"Unexpected error in _check_device_thread: {e}")
+                # Make sure we always put something in the queue
+                result_queue.put(False)
+        
+        # Start the thread
+        thread = threading.Thread(target=_check_device_thread)
+        thread.daemon = True
+        thread.start()
+        
+        try:
+            # Wait for the result with a timeout
+            result = result_queue.get(timeout=2)
+            
+            # Cache the result
+            setattr(self, cache_key, result)
+            setattr(self, f"{cache_key}_time", current_time)
+            
+            return result
+        except queue.Empty:
+            logger.warning("Timeout checking device validity")
+            
+            # Cache the result
+            setattr(self, cache_key, False)
+            setattr(self, f"{cache_key}_time", current_time)
+            
+            return False
+        except Exception as e:
+            logger.error(f"Error getting result from queue: {e}")
+            
+            # Cache the result
+            setattr(self, cache_key, False)
+            setattr(self, f"{cache_key}_time", current_time)
+            
+            return False
+    
+    def find_working_device(self):
+        """Find a working audio device and switch to it.
+        
+        This method will try all available devices until it finds one that works.
+        
+        Returns:
+            bool: True if a working device was found and set, False otherwise
+        """
+        logger.info("Searching for a working audio device")
+        
+        # Get PyAudio instance
+        try:
+            audio, has_wasapi = get_pyaudio_instance()
+        except Exception as e:
+            logger.error(f"Error getting PyAudio instance: {e}")
+            return False
+        
+        # Get device count
+        try:
+            device_count = audio.get_device_count()
+            logger.info(f"Found {device_count} audio devices")
+        except Exception as e:
+            logger.error(f"Error getting device count: {e}")
+            audio.terminate()
+            return False
+        
+        # Try each device
+        current_device = self.device_index
+        for i in range(device_count):
+            # Skip current device if it's the one that failed
+            if i == current_device:
+                continue
+            
+            # Check if device is valid
+            if self.is_device_valid(i):
+                try:
+                    # Get device info
+                    device_info = audio.get_device_info_by_index(i)
+                    logger.info(f"Found working device: {device_info['name']} (index {i})")
+                    
+                    # Set device
+                    self.device_index = i
+                    self.config["audio"]["device_index"] = i
+                    self._save_config()
+                    
+                    # Clean up
+                    audio.terminate()
+                    
+                    return True
+                except Exception as e:
+                    logger.error(f"Error setting device {i}: {e}")
+        
+        # Clean up
+        audio.terminate()
+        
+        logger.warning("No working audio devices found")
+        return False
+    
+    def get_device_info(self):
+        """Get information about the current device.
+        
+        Returns:
+            dict: Device information or None if the device is invalid
+        """
+        # Cache device info results to avoid frequent checks
+        cache_key = f"device_info_{self.device_index}"
+        current_time = time.time()
+        
+        # If we have a cached result that's less than 5 seconds old, use it
+        if hasattr(self, cache_key) and current_time - getattr(self, f"{cache_key}_time") < 5.0:
+            return getattr(self, cache_key)
             
         try:
             # Get PyAudio instance
-            if self.audio is None:
-                audio = get_pyaudio_instance()[0]  # Get the first element (the PyAudio instance)
-            else:
-                audio = self.audio
-                
-            # Check if device is a loopback device
-            return audio.is_loopback(device_index)
+            audio, has_wasapi = get_pyaudio_instance()
+            
+            # Get device info
+            device_info = audio.get_device_info_by_index(self.device_index)
+            
+            # Clean up
+            audio.terminate()
+            
+            # Cache the result
+            setattr(self, cache_key, device_info)
+            setattr(self, f"{cache_key}_time", current_time)
+            
+            return device_info
         except Exception as e:
-            logger.debug(f"Error checking if device is loopback: {e}")
-            return False 
+            logger.error(f"Error getting device info: {e}")
+            
+            # Cache the result
+            setattr(self, cache_key, None)
+            setattr(self, f"{cache_key}_time", current_time)
+            
+            return None 
