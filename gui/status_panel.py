@@ -89,6 +89,41 @@ class StatusPanel:
         self.block_label = ttk.Label(storage_frame, text="3 hours")
         self.block_label.grid(row=2, column=1, sticky=tk.W, padx=5, pady=5)
         
+        # Estimated block size
+        ttk.Label(storage_frame, text="Estimated Block Size:").grid(row=3, column=0, sticky=tk.W, padx=5, pady=5)
+        self.block_estimate_label = ttk.Label(storage_frame, text="0 MB")
+        self.block_estimate_label.grid(row=3, column=1, sticky=tk.W, padx=5, pady=5)
+        
+        # Current block size
+        ttk.Label(storage_frame, text="Current Block Size:").grid(row=4, column=0, sticky=tk.W, padx=5, pady=5)
+        self.block_size_label = ttk.Label(storage_frame, text="0 bytes")
+        self.block_size_label.grid(row=4, column=1, sticky=tk.W, padx=5, pady=5)
+        
+        # Estimated daily storage
+        ttk.Label(storage_frame, text="Daily Storage Estimate:").grid(row=5, column=0, sticky=tk.W, padx=5, pady=5)
+        self.day_size_label = ttk.Label(storage_frame, text="0 MB")
+        self.day_size_label.grid(row=5, column=1, sticky=tk.W, padx=5, pady=5)
+        
+        # Estimated 90-day storage
+        ttk.Label(storage_frame, text="90-Day Storage Estimate:").grid(row=6, column=0, sticky=tk.W, padx=5, pady=5)
+        self.storage_estimate_label = ttk.Label(storage_frame, text="0 GB")
+        self.storage_estimate_label.grid(row=6, column=1, sticky=tk.W, padx=5, pady=5)
+        
+        # Recordings folder size
+        ttk.Label(storage_frame, text="Recordings Folder Size:").grid(row=7, column=0, sticky=tk.W, padx=5, pady=5)
+        self.folder_size_label = ttk.Label(storage_frame, text="0 MB")
+        self.folder_size_label.grid(row=7, column=1, sticky=tk.W, padx=5, pady=5)
+        
+        # Free disk space
+        ttk.Label(storage_frame, text="Free Disk Space:").grid(row=8, column=0, sticky=tk.W, padx=5, pady=5)
+        self.free_space_label = ttk.Label(storage_frame, text="0 GB")
+        self.free_space_label.grid(row=8, column=1, sticky=tk.W, padx=5, pady=5)
+        
+        # Retention fit
+        ttk.Label(storage_frame, text="Retention Would Fit:").grid(row=9, column=0, sticky=tk.W, padx=5, pady=5)
+        self.retention_fit_label = ttk.Label(storage_frame, text="Calculating...")
+        self.retention_fit_label.grid(row=9, column=1, sticky=tk.W, padx=5, pady=5)
+        
         # Initialize recording start time
         self.recording_start_time = None
     
@@ -146,4 +181,42 @@ class StatusPanel:
         self.retention_label.config(text=f"{status['retention_days']} days")
         
         recording_hours = self.recorder.config["general"]["recording_hours"]
-        self.block_label.config(text=f"{recording_hours} hours") 
+        self.block_label.config(text=f"{recording_hours} hours")
+        
+        # Update estimated block size
+        if "estimated_block_size" in status:
+            self.block_estimate_label.config(text=self.recorder.format_file_size(status["estimated_block_size"]))
+        
+        # Update current block size
+        if "current_block_size" in status:
+            self.block_size_label.config(text=self.recorder.format_file_size(status["current_block_size"]))
+        
+        # Update daily storage estimate
+        if "estimated_day_size" in status:
+            self.day_size_label.config(text=self.recorder.format_file_size(status["estimated_day_size"]))
+        
+        # Update 90-day storage estimate
+        if "estimated_90day_size" in status:
+            self.storage_estimate_label.config(text=self.recorder.format_file_size(status["estimated_90day_size"]))
+            
+        # Update recordings folder size
+        if "recordings_folder_size" in status:
+            self.folder_size_label.config(text=self.recorder.format_file_size(status["recordings_folder_size"]))
+            
+        # Update free disk space
+        if "free_disk_space" in status:
+            self.free_space_label.config(text=self.recorder.format_file_size(status["free_disk_space"]))
+            
+        # Update retention fit information
+        if "retention_fit" in status:
+            fit_info = status["retention_fit"]
+            if fit_info["fits"]:
+                self.retention_fit_label.config(
+                    text=f"Yes ({fit_info['percentage']:.1f}% of free space)",
+                    foreground="green"
+                )
+            else:
+                self.retention_fit_label.config(
+                    text=f"No (Need {self.recorder.format_file_size(fit_info['needed_space'])})",
+                    foreground="red"
+                ) 

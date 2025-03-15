@@ -184,6 +184,32 @@ def main():
         print(f"Recordings Directory: {status['recordings_dir']}")
         print(f"Retention Days: {status['retention_days']}")
         print(f"Recording Hours: {status['recording_hours']}")
+        
+        # Display new information
+        print("\nStorage Information:")
+        print("-------------------")
+        if status['current_file']:
+            print(f"Current Block Size: {recorder.format_file_size(status['current_block_size'])}")
+        
+        # Display estimated storage requirements
+        print(f"Estimated Block Size ({status['recording_hours']} hours): {recorder.format_file_size(status['estimated_block_size'])}")
+        print(f"Estimated Daily Storage: {recorder.format_file_size(status['estimated_day_size'])}")
+        print(f"Estimated 90-Day Storage: {recorder.format_file_size(status['estimated_90day_size'])}")
+        
+        # Display current recordings folder size
+        print(f"Current Recordings Folder Size: {recorder.format_file_size(status['recordings_folder_size'])}")
+        
+        # Display free disk space
+        print(f"Free Disk Space: {recorder.format_file_size(status['free_disk_space'])}")
+        
+        # Display retention fit information if available
+        if "retention_fit" in status:
+            fit_info = status["retention_fit"]
+            if fit_info["fits"]:
+                print(f"Retention Period Would Fit: Yes (Using {fit_info['percentage']:.1f}% of free space)")
+            else:
+                print(f"Retention Period Would Fit: No (Need {recorder.format_file_size(fit_info['needed_space'])})")
+        
         print()
         
         return 0

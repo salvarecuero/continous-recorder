@@ -67,6 +67,60 @@ class RecorderGUI:
         device_label = ttk.Label(status_frame, textvariable=self.device_var)
         device_label.pack(side=tk.RIGHT, padx=5)
         
+        # Storage info frame
+        storage_frame = ttk.LabelFrame(main_frame, text="Storage Information", padding="10")
+        storage_frame.pack(fill=tk.X, pady=5)
+        
+        # Current block size
+        block_size_frame = ttk.Frame(storage_frame)
+        block_size_frame.pack(fill=tk.X, pady=2)
+        ttk.Label(block_size_frame, text="Current Block Size:").pack(side=tk.LEFT, padx=5)
+        self.block_size_var = tk.StringVar(value="0 bytes")
+        ttk.Label(block_size_frame, textvariable=self.block_size_var).pack(side=tk.LEFT, padx=5)
+        
+        # Estimated block size
+        block_estimate_frame = ttk.Frame(storage_frame)
+        block_estimate_frame.pack(fill=tk.X, pady=2)
+        ttk.Label(block_estimate_frame, text="Estimated Block Size:").pack(side=tk.LEFT, padx=5)
+        self.block_estimate_var = tk.StringVar(value="0 MB")
+        ttk.Label(block_estimate_frame, textvariable=self.block_estimate_var).pack(side=tk.LEFT, padx=5)
+        
+        # Daily storage estimate
+        day_size_frame = ttk.Frame(storage_frame)
+        day_size_frame.pack(fill=tk.X, pady=2)
+        ttk.Label(day_size_frame, text="Daily Storage Estimate:").pack(side=tk.LEFT, padx=5)
+        self.day_size_var = tk.StringVar(value="0 MB")
+        ttk.Label(day_size_frame, textvariable=self.day_size_var).pack(side=tk.LEFT, padx=5)
+        
+        # 90-day storage estimate
+        storage_estimate_frame = ttk.Frame(storage_frame)
+        storage_estimate_frame.pack(fill=tk.X, pady=2)
+        ttk.Label(storage_estimate_frame, text="90-Day Storage Estimate:").pack(side=tk.LEFT, padx=5)
+        self.storage_estimate_var = tk.StringVar(value="0 GB")
+        ttk.Label(storage_estimate_frame, textvariable=self.storage_estimate_var).pack(side=tk.LEFT, padx=5)
+        
+        # Recordings folder size
+        folder_size_frame = ttk.Frame(storage_frame)
+        folder_size_frame.pack(fill=tk.X, pady=2)
+        ttk.Label(folder_size_frame, text="Recordings Folder Size:").pack(side=tk.LEFT, padx=5)
+        self.folder_size_var = tk.StringVar(value="0 MB")
+        ttk.Label(folder_size_frame, textvariable=self.folder_size_var).pack(side=tk.LEFT, padx=5)
+        
+        # Free disk space
+        free_space_frame = ttk.Frame(storage_frame)
+        free_space_frame.pack(fill=tk.X, pady=2)
+        ttk.Label(free_space_frame, text="Free Disk Space:").pack(side=tk.LEFT, padx=5)
+        self.free_space_var = tk.StringVar(value="0 GB")
+        ttk.Label(free_space_frame, textvariable=self.free_space_var).pack(side=tk.LEFT, padx=5)
+        
+        # Retention fit
+        retention_fit_frame = ttk.Frame(storage_frame)
+        retention_fit_frame.pack(fill=tk.X, pady=2)
+        ttk.Label(retention_fit_frame, text="Retention Would Fit:").pack(side=tk.LEFT, padx=5)
+        self.retention_fit_var = tk.StringVar(value="Calculating...")
+        self.retention_fit_label = ttk.Label(retention_fit_frame, textvariable=self.retention_fit_var)
+        self.retention_fit_label.pack(side=tk.LEFT, padx=5)
+        
         # Control frame
         control_frame = ttk.LabelFrame(main_frame, text="Controls", padding="10")
         control_frame.pack(fill=tk.X, pady=5)
@@ -433,11 +487,73 @@ class RecorderGUI:
                 self.device_var.set(f"Device: {status['device_name']}")
             else:
                 self.device_var.set("No device selected")
+                
+            # Update storage information
+            if "current_block_size" in status:
+                self.block_size_var.set(self.recorder.format_file_size(status["current_block_size"]))
+            
+            if "estimated_block_size" in status:
+                self.block_estimate_var.set(self.recorder.format_file_size(status["estimated_block_size"]))
+                
+            if "estimated_day_size" in status:
+                self.day_size_var.set(self.recorder.format_file_size(status["estimated_day_size"]))
+                
+            if "estimated_90day_size" in status:
+                self.storage_estimate_var.set(self.recorder.format_file_size(status["estimated_90day_size"]))
+                
+            if "recordings_folder_size" in status:
+                self.folder_size_var.set(self.recorder.format_file_size(status["recordings_folder_size"]))
+                
+            if "free_disk_space" in status:
+                free_space = status["free_disk_space"]
+                self.free_space_var.set(self.recorder.format_file_size(free_space))
+                
+                # Check for critically low disk space (less than 5GB or 5% of needed space for retention)
+                if "retention_fit" in status:
+                    retention_fit = status["retention_fit"]
+                    critical_space = min(5 * 1024 * 1024 * 1024, retention_fit["needed_space"] * 0.05)
+                    
+                    if free_space < critical_space:
+                        # Show warning dialog (but not more than once every 30 minutes)
+                        current_time = time.time()
+                        if not hasattr(self, '_last_disk_warning_time') or current_time - self._last_disk_warning_time > 1800:
+                            self._last_disk_warning_time = current_time
+                            self.log("CRITICAL: Disk space is critically low!")
+                            
+                            # Show warning in a separate thread to avoid blocking the UI
+                            threading.Thread(target=self._show_disk_warning, args=(free_space,), daemon=True).start()
+                
+            # Update retention fit information
+            if "retention_fit" in status:
+                fit_info = status["retention_fit"]
+                if fit_info["fits"]:
+                    self.retention_fit_var.set(f"Yes ({fit_info['percentage']:.1f}% of free space)")
+                    self.retention_fit_label.config(foreground="green")
+                else:
+                    self.retention_fit_var.set(f"No (Need {self.recorder.format_file_size(fit_info['needed_space'])})")
+                    self.retention_fit_label.config(foreground="red")
+                    
+                    # Log warning if retention won't fit
+                    if not hasattr(self, '_retention_warning_logged') or not self._retention_warning_logged:
+                        if not fit_info["fits"]:
+                            self.log("WARNING: Retention period would not fit in available disk space")
+                            self._retention_warning_logged = True
+                        else:
+                            self._retention_warning_logged = False
         except Exception as e:
             logger.error(f"Error updating status: {e}")
         
         # Schedule next update
         self.root.after(1000, self.update_status)
+    
+    def _show_disk_warning(self, free_space):
+        """Show a warning dialog for critically low disk space."""
+        messagebox.showwarning(
+            "Critical Disk Space Warning",
+            f"Disk space is critically low!\n\n"
+            f"Only {self.recorder.format_file_size(free_space)} remaining.\n\n"
+            f"Please free up disk space or reduce the retention period to avoid data loss."
+        )
     
     def log(self, message):
         """Add message to log."""
