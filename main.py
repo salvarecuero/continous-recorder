@@ -11,6 +11,7 @@ import sys
 import argparse
 import tkinter as tk
 import logging
+import datetime
 
 from utils.logging_setup import setup_logger
 from core.audio_recorder import AudioRecorder
@@ -73,6 +74,12 @@ def parse_arguments():
         "--status", 
         action="store_true",
         help="Show current status"
+    )
+    
+    parser.add_argument(
+        "--debug", 
+        action="store_true",
+        help="Enable debug logging"
     )
     
     return parser.parse_args()
@@ -139,6 +146,34 @@ def send_command(command):
         logger.error(f"Failed to send command: {command}")
         return 1
 
+def setup_logging(args):
+    """Setup logging configuration."""
+    # Create logs directory
+    os.makedirs("logs", exist_ok=True)
+    
+    # Create timestamp for log file
+    timestamp = datetime.datetime.now().strftime("%d-%b-%Y_%H-%M-%S")
+    log_file = os.path.join("logs", f"recorder_{timestamp}.log")
+    
+    # Set log level
+    log_level = logging.DEBUG if args.debug else logging.INFO
+    
+    # Configure logging
+    logging.basicConfig(
+        level=log_level,
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+        handlers=[
+            logging.FileHandler(log_file),
+            logging.StreamHandler()
+        ]
+    )
+    
+    # Get logger
+    logger = logging.getLogger("ContinuousRecorder")
+    logger.setLevel(log_level)
+    
+    return logger
+
 def main():
     """Main entry point."""
     # Parse arguments
@@ -146,7 +181,7 @@ def main():
     
     # Setup logger
     global logger
-    logger = setup_logger()
+    logger = setup_logging(args)
     
     # List devices if requested
     if args.list_devices:

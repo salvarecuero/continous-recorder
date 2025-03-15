@@ -10,12 +10,103 @@ import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 import logging
 import psutil
+import numpy as np
+import math
 
 # Import core components
 from core.audio_recorder import AudioRecorder, HAS_WASAPI
 
 # Get logger
 logger = logging.getLogger("ContinuousRecorder")
+
+class DbMeter(tk.Canvas):
+    """A decibel meter visualization for audio levels."""
+    
+    def __init__(self, parent, width=200, height=20, **kwargs):
+        """Initialize the dB meter."""
+        super().__init__(parent, width=width, height=height, **kwargs)
+        self.width = width
+        self.height = height
+        self.configure(bg='#1E1E1E')  # Dark background
+        self.level = 0  # Current level (0-1)
+        self.peak_level = 0  # Peak level
+        self.peak_hold_time = 30  # Frames to hold peak
+        self.peak_hold_counter = 0
+        self.draw_meter()
+        
+    def set_level(self, level):
+        """Set the current audio level (0-1)."""
+        self.level = max(0, min(1, level))
+        if self.level > self.peak_level:
+            self.peak_level = self.level
+            self.peak_hold_counter = self.peak_hold_time
+        elif self.peak_hold_counter > 0:
+            self.peak_hold_counter -= 1
+        else:
+            self.peak_level = max(0, self.peak_level - 0.01)  # Gradually decrease peak
+        self.draw_meter()
+    
+    def draw_meter(self):
+        """Draw the meter with the current level."""
+        self.delete("all")
+        
+        # Draw background segments with rounded corners
+        segment_width = self.width / 30
+        segment_height = self.height - 4  # Leave space for border
+        segment_spacing = 1  # Space between segments
+        
+        for i in range(30):
+            # Determine color based on position (gradient from green to yellow to red)
+            if i < 18:  # Green zone (0-60%)
+                r = int(((i / 18) * 255))
+                g = 255
+                b = 0
+                color = f"#{r:02x}{g:02x}{b:02x}"
+            elif i < 27:  # Yellow zone (60-90%)
+                r = 255
+                g = int(255 - ((i - 18) / 9) * 255)
+                b = 0
+                color = f"#{r:02x}{g:02x}{b:02x}"
+            else:  # Red zone (90-100%)
+                color = "#FF0000"
+            
+            # Draw segment if it's within the current level
+            if i / 30 <= self.level:
+                x = 2 + i * segment_width
+                y = 2
+                # Draw rounded rectangle
+                self.create_rectangle(
+                    x, y,
+                    x + segment_width - segment_spacing, y + segment_height,
+                    fill=color, outline="", width=0,
+                    tags="segment"
+                )
+        
+        # Draw peak indicator
+        peak_x = 2 + self.peak_level * (self.width - 4)
+        self.create_line(
+            peak_x, 2, peak_x, self.height - 2,
+            fill="white", width=2
+        )
+        
+        # Draw border
+        self.create_rectangle(
+            1, 1, self.width - 1, self.height - 1,
+            outline="#444444", width=1
+        )
+        
+        # Draw dB scale markers
+        for db in [-60, -50, -40, -30, -20, -10, -3, 0]:
+            # Convert dB to linear position (0-1)
+            if db == -60:  # Minimum visible level
+                pos = 0
+            else:
+                pos = (db + 60) / 60  # Scale -60dB to 0dB to 0-1 range
+            
+            x = 2 + pos * (self.width - 4)
+            self.create_line(x, self.height-6, x, self.height-2, fill="#888888")
+            if db in [-60, -30, -10, 0]:  # Only show some labels to avoid clutter
+                self.create_text(x, self.height/2, text=f"{db}", fill="#BBBBBB", font=("", 7))
 
 class RecorderGUI:
     """GUI wrapper for the Continuous Audio Recorder."""
@@ -146,39 +237,52 @@ class RecorderGUI:
             self.canvas.bind_all("<Button-5>", _on_mousewheel_linux)
     
     def adjust_window_size(self):
-        """Adjust window size to fit content."""
-        # Wait for all widgets to be properly measured
-        self.root.update_idletasks()
-        
-        # Get required height for all widgets
-        required_height = self.scrollable_frame.winfo_reqheight() + 20  # Add some padding
+        """Adjust the window size based on content."""
+        # Update the scrollregion
+        self._update_scrollregion()
         
         # Get screen dimensions
         screen_width = self.root.winfo_screenwidth()
         screen_height = self.root.winfo_screenheight()
         
-        # Set window height to required height, but not more than 90% of screen height
-        window_height = min(required_height, screen_height * 0.9)
+        # Calculate desired window size (80% of screen size)
+        desired_width = int(screen_width * 0.8)
+        desired_height = int(screen_height * 0.8)
         
-        # Set window width (fixed width or percentage of screen width)
-        window_width = min(800, screen_width * 0.7)
+        # Get the required size for the content
+        self.scrollable_frame.update_idletasks()
+        content_width = self.scrollable_frame.winfo_reqwidth()
+        content_height = self.scrollable_frame.winfo_reqheight()
+        
+        # Add padding for scrollbars and window decorations
+        padding_width = 50
+        padding_height = 50
+        
+        # Calculate window size
+        window_width = min(desired_width, content_width + padding_width)
+        window_height = min(desired_height, content_height + padding_height)
+        
+        # Ensure minimum size
+        window_width = max(window_width, 800)  # Minimum width of 800 pixels
+        window_height = max(window_height, 600)  # Minimum height of 600 pixels
         
         # Set window size
-        self.root.geometry(f"{int(window_width)}x{int(window_height)}")
-        
-        # Set minimum size
-        self.root.minsize(600, 400)
+        self.root.geometry(f"{window_width}x{window_height}")
         
         # Center window on screen
-        x_position = (screen_width - window_width) // 2
-        y_position = (screen_height - window_height) // 2
-        self.root.geometry(f"+{int(x_position)}+{int(y_position)}")
+        x = (screen_width - window_width) // 2
+        y = (screen_height - window_height) // 2
+        self.root.geometry(f"+{x}+{y}")
         
-        # Update scrollbar visibility
-        self._update_scrollbar_visibility()
+        # Update scrollregion again after resize
+        self.root.update_idletasks()
+        self._update_scrollregion()
     
     def create_widgets(self):
         """Create the GUI widgets."""
+        # Initialize labels dictionary
+        self.labels = {}
+        
         # Create styles for colored labels
         self._create_colored_styles()
         
@@ -186,86 +290,75 @@ class RecorderGUI:
         main_frame = ttk.Frame(self.scrollable_frame, padding="10")
         main_frame.pack(fill=tk.BOTH, expand=True)
         
-        # Status frame
+        # Status frame with improved styling
         status_frame = ttk.LabelFrame(main_frame, text="Status", padding="10")
         status_frame.pack(fill=tk.X, pady=5)
         
-        # Status indicators
+        # Status indicators with better styling
+        status_header_frame = ttk.Frame(status_frame)
+        status_header_frame.pack(fill=tk.X, pady=5)
+        
         self.status_var = tk.StringVar(value="Stopped")
-        self.status_label = ttk.Label(status_frame, textvariable=self.status_var, font=("", 12, "bold"))
+        ttk.Label(status_header_frame, text="Recording Status:", font=("", 10, "bold")).pack(side=tk.LEFT, padx=5)
+        self.status_label = ttk.Label(status_header_frame, textvariable=self.status_var, font=("", 10, "bold"))
         self.status_label.pack(side=tk.LEFT, padx=5)
         
         self.device_var = tk.StringVar(value="No device selected")
-        device_label = ttk.Label(status_frame, textvariable=self.device_var)
-        device_label.pack(side=tk.RIGHT, padx=5)
+        ttk.Label(status_header_frame, text="Device:", font=("", 10, "bold")).pack(side=tk.LEFT, padx=(20, 5))
+        device_label = ttk.Label(status_header_frame, textvariable=self.device_var)
+        device_label.pack(side=tk.LEFT, padx=5)
         
-        # Storage info frame
-        storage_frame = ttk.LabelFrame(main_frame, text="Storage Information", padding="10")
+        # Add dB meter visualization
+        db_frame = ttk.Frame(status_frame)
+        db_frame.pack(fill=tk.X, pady=5)
+        
+        ttk.Label(db_frame, text="Audio Level:", font=("", 9, "bold")).pack(side=tk.LEFT, padx=5)
+        self.db_meter = DbMeter(db_frame, width=400, height=30, highlightthickness=0)
+        self.db_meter.pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
+        
+        self.db_level_var = tk.StringVar(value="-∞ dB")
+        ttk.Label(db_frame, textvariable=self.db_level_var, width=8).pack(side=tk.LEFT, padx=5)
+        
+        # Storage info frame with two columns
+        storage_frame = ttk.LabelFrame(main_frame, text="Recording Information", padding="10")
         storage_frame.pack(fill=tk.X, pady=5)
         
+        # Create two column frames
+        left_column = ttk.Frame(storage_frame)
+        left_column.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        
+        right_column = ttk.Frame(storage_frame)
+        right_column.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        
+        # Left column items
         # Current block size
-        block_size_frame = ttk.Frame(storage_frame)
-        block_size_frame.pack(fill=tk.X, pady=2)
-        ttk.Label(block_size_frame, text="Current Block Size:").pack(side=tk.LEFT, padx=5)
-        self.block_size_var = tk.StringVar(value="0 bytes")
-        ttk.Label(block_size_frame, textvariable=self.block_size_var).pack(side=tk.LEFT, padx=5)
+        self._create_info_row(left_column, "Current Block Size:", "block_size_var", "0 bytes")
         
         # Recording time duration
-        recording_time_frame = ttk.Frame(storage_frame)
-        recording_time_frame.pack(fill=tk.X, pady=2)
-        ttk.Label(recording_time_frame, text="Recording Time:").pack(side=tk.LEFT, padx=5)
-        self.recording_time_var = tk.StringVar(value="00:00:00")
-        ttk.Label(recording_time_frame, textvariable=self.recording_time_var).pack(side=tk.LEFT, padx=5)
+        self._create_info_row(left_column, "Recording Time:", "recording_time_var", "00:00:00")
         
         # Time until next block
-        next_block_frame = ttk.Frame(storage_frame)
-        next_block_frame.pack(fill=tk.X, pady=2)
-        ttk.Label(next_block_frame, text="Time Until Next Block:").pack(side=tk.LEFT, padx=5)
-        self.next_block_var = tk.StringVar(value="00:00:00")
-        ttk.Label(next_block_frame, textvariable=self.next_block_var).pack(side=tk.LEFT, padx=5)
+        self._create_info_row(left_column, "Time Until Next Block:", "next_block_var", "00:00:00")
         
         # Estimated block size
-        block_estimate_frame = ttk.Frame(storage_frame)
-        block_estimate_frame.pack(fill=tk.X, pady=2)
-        ttk.Label(block_estimate_frame, text="Estimated Block Size:").pack(side=tk.LEFT, padx=5)
-        self.block_estimate_var = tk.StringVar(value="0 MB")
-        ttk.Label(block_estimate_frame, textvariable=self.block_estimate_var).pack(side=tk.LEFT, padx=5)
+        self._create_info_row(left_column, "Estimated Block Size:", "block_estimate_var", "0 MB")
         
+        # Right column items
         # Daily storage estimate
-        day_size_frame = ttk.Frame(storage_frame)
-        day_size_frame.pack(fill=tk.X, pady=2)
-        ttk.Label(day_size_frame, text="Daily Storage Estimate:").pack(side=tk.LEFT, padx=5)
-        self.day_size_var = tk.StringVar(value="0 MB")
-        ttk.Label(day_size_frame, textvariable=self.day_size_var).pack(side=tk.LEFT, padx=5)
+        self._create_info_row(right_column, "Daily Storage Estimate:", "day_size_var", "0 MB")
         
         # 90-day storage estimate
-        storage_estimate_frame = ttk.Frame(storage_frame)
-        storage_estimate_frame.pack(fill=tk.X, pady=2)
-        ttk.Label(storage_estimate_frame, text="90-Day Storage Estimate:").pack(side=tk.LEFT, padx=5)
-        self.storage_estimate_var = tk.StringVar(value="0 GB")
-        ttk.Label(storage_estimate_frame, textvariable=self.storage_estimate_var).pack(side=tk.LEFT, padx=5)
+        self._create_info_row(right_column, "90-Day Storage Estimate:", "storage_estimate_var", "0 GB")
         
         # Recordings folder size
-        folder_size_frame = ttk.Frame(storage_frame)
-        folder_size_frame.pack(fill=tk.X, pady=2)
-        ttk.Label(folder_size_frame, text="Recordings Folder Size:").pack(side=tk.LEFT, padx=5)
-        self.folder_size_var = tk.StringVar(value="0 MB")
-        ttk.Label(folder_size_frame, textvariable=self.folder_size_var).pack(side=tk.LEFT, padx=5)
+        self._create_info_row(right_column, "Recordings Folder Size:", "folder_size_var", "0 MB")
         
         # Free disk space
-        free_space_frame = ttk.Frame(storage_frame)
-        free_space_frame.pack(fill=tk.X, pady=2)
-        ttk.Label(free_space_frame, text="Free Disk Space:").pack(side=tk.LEFT, padx=5)
-        self.free_space_var = tk.StringVar(value="0 GB")
-        ttk.Label(free_space_frame, textvariable=self.free_space_var).pack(side=tk.LEFT, padx=5)
+        self._create_info_row(right_column, "Free Disk Space:", "free_space_var", "0 GB")
         
         # Retention fit
-        retention_fit_frame = ttk.Frame(storage_frame)
-        retention_fit_frame.pack(fill=tk.X, pady=2)
-        ttk.Label(retention_fit_frame, text="Retention Would Fit:").pack(side=tk.LEFT, padx=5)
-        self.retention_fit_var = tk.StringVar(value="Calculating...")
-        self.retention_fit_label = ttk.Label(retention_fit_frame, textvariable=self.retention_fit_var)
-        self.retention_fit_label.pack(side=tk.LEFT, padx=5)
+        self._create_info_row(right_column, "Retention Would Fit:", "retention_fit_var", "Calculating...")
+        self.retention_fit_label = self.labels["retention_fit_var"]
         
         # Control frame
         control_frame = ttk.LabelFrame(main_frame, text="Controls", padding="10")
@@ -292,7 +385,7 @@ class RecorderGUI:
         device_frame = ttk.Frame(settings_frame)
         device_frame.pack(fill=tk.X, pady=5)
         
-        ttk.Label(device_frame, text="Recording Device:").pack(side=tk.LEFT, padx=5)
+        ttk.Label(device_frame, text="Recording Device:", font=("", 9, "bold")).pack(side=tk.LEFT, padx=5)
         
         self.device_list = ttk.Combobox(device_frame, width=40, state="readonly")
         self.device_list.pack(side=tk.LEFT, padx=5)
@@ -307,7 +400,7 @@ class RecorderGUI:
         self.format_frame = ttk.Frame(settings_frame)
         self.format_frame.pack(fill=tk.X, pady=5)
         
-        ttk.Label(self.format_frame, text="Audio Format:").pack(side=tk.LEFT, padx=5)
+        ttk.Label(self.format_frame, text="Audio Format:", font=("", 9, "bold")).pack(side=tk.LEFT, padx=5)
         
         self.format_var = tk.StringVar(value=self.recorder.config["audio"]["format"])
         format_combo = ttk.Combobox(self.format_frame, textvariable=self.format_var, state="readonly", width=10)
@@ -323,7 +416,7 @@ class RecorderGUI:
         if self.recorder.config["audio"]["format"] == "mp3":
             self.quality_frame.pack(fill=tk.X, pady=5)
         
-        ttk.Label(self.quality_frame, text="MP3 Quality:").pack(side=tk.LEFT, padx=5)
+        ttk.Label(self.quality_frame, text="MP3 Quality:", font=("", 9, "bold")).pack(side=tk.LEFT, padx=5)
         
         self.quality_var = tk.StringVar(value=self.recorder.config["audio"]["quality"])
         self.quality_high = ttk.Radiobutton(self.quality_frame, text="High (320kbps)", variable=self.quality_var, value="high")
@@ -348,7 +441,7 @@ class RecorderGUI:
         self.mono_frame = ttk.Frame(settings_frame)
         self.mono_frame.pack(fill=tk.X, pady=5)
         
-        ttk.Label(self.mono_frame, text="Recording Mode:").pack(side=tk.LEFT, padx=5)
+        ttk.Label(self.mono_frame, text="Recording Mode:", font=("", 9, "bold")).pack(side=tk.LEFT, padx=5)
         
         self.mono_var = tk.BooleanVar(value=self.recorder.config["audio"]["mono"])
         mono_check = ttk.Checkbutton(self.mono_frame, text="Mono (reduces file size)", variable=self.mono_var)
@@ -361,7 +454,7 @@ class RecorderGUI:
         monitor_frame = ttk.Frame(settings_frame)
         monitor_frame.pack(fill=tk.X, pady=5)
         
-        ttk.Label(monitor_frame, text="Monitor Level:").pack(side=tk.LEFT, padx=5)
+        ttk.Label(monitor_frame, text="Monitor Level:", font=("", 9, "bold")).pack(side=tk.LEFT, padx=5)
         
         self.monitor_var = tk.DoubleVar(value=self.recorder.config["audio"]["monitor_level"])
         monitor_scale = ttk.Scale(monitor_frame, from_=0.0, to=1.0, variable=self.monitor_var, command=self.set_monitor_level)
@@ -380,7 +473,7 @@ class RecorderGUI:
         dir_frame = ttk.Frame(settings_frame)
         dir_frame.pack(fill=tk.X, pady=5)
         
-        ttk.Label(dir_frame, text="Recordings Directory:").pack(side=tk.LEFT, padx=5)
+        ttk.Label(dir_frame, text="Recordings Directory:", font=("", 9, "bold")).pack(side=tk.LEFT, padx=5)
         
         self.dir_var = tk.StringVar(value=self.recorder.config["paths"]["recordings_dir"])
         dir_entry = ttk.Entry(dir_frame, textvariable=self.dir_var, width=30)
@@ -396,13 +489,13 @@ class RecorderGUI:
         retention_frame = ttk.Frame(settings_frame)
         retention_frame.pack(fill=tk.X, pady=5)
         
-        ttk.Label(retention_frame, text="Retention Period (days):").pack(side=tk.LEFT, padx=5)
+        ttk.Label(retention_frame, text="Retention Period (days):", font=("", 9, "bold")).pack(side=tk.LEFT, padx=5)
         
         self.retention_var = tk.IntVar(value=self.recorder.config["general"]["retention_days"])
         retention_entry = ttk.Entry(retention_frame, textvariable=self.retention_var, width=5)
         retention_entry.pack(side=tk.LEFT, padx=5)
         
-        ttk.Label(retention_frame, text="Recording Block (hours):").pack(side=tk.LEFT, padx=5)
+        ttk.Label(retention_frame, text="Recording Block (hours):", font=("", 9, "bold")).pack(side=tk.LEFT, padx=5)
         
         self.block_var = tk.IntVar(value=self.recorder.config["general"]["recording_hours"])
         block_entry = ttk.Entry(retention_frame, textvariable=self.block_var, width=5)
@@ -437,46 +530,8 @@ class RecorderGUI:
         scrollbar.pack(fill=tk.Y, side=tk.RIGHT)
         self.log_text.config(yscrollcommand=scrollbar.set)
         
-        # System resource monitor frame
-        resource_frame = ttk.LabelFrame(main_frame, text="System Resources", padding="10")
-        resource_frame.pack(fill=tk.X, pady=5)
-        
-        # CPU usage
-        cpu_frame = ttk.Frame(resource_frame)
-        cpu_frame.pack(fill=tk.X, pady=2)
-        ttk.Label(cpu_frame, text="CPU Usage:").pack(side=tk.LEFT, padx=5)
-        self.cpu_var = tk.StringVar(value="0%")
-        self.cpu_label = ttk.Label(cpu_frame, textvariable=self.cpu_var, width=8, style="Normal.TLabel")
-        self.cpu_label.pack(side=tk.LEFT, padx=5)
-        
-        # CPU progress bar
-        self.cpu_progress = ttk.Progressbar(cpu_frame, orient=tk.HORIZONTAL, length=200, mode='determinate')
-        self.cpu_progress.pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
-        
-        # RAM usage
-        ram_frame = ttk.Frame(resource_frame)
-        ram_frame.pack(fill=tk.X, pady=2)
-        ttk.Label(ram_frame, text="RAM Usage:").pack(side=tk.LEFT, padx=5)
-        self.ram_var = tk.StringVar(value="0 MB")
-        self.ram_label = ttk.Label(ram_frame, textvariable=self.ram_var, width=12, style="Normal.TLabel")
-        self.ram_label.pack(side=tk.LEFT, padx=5)
-        
-        # RAM progress bar
-        self.ram_progress = ttk.Progressbar(ram_frame, orient=tk.HORIZONTAL, length=200, mode='determinate')
-        self.ram_progress.pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
-        
-        # Total system info
-        system_frame = ttk.Frame(resource_frame)
-        system_frame.pack(fill=tk.X, pady=2)
-        ttk.Label(system_frame, text="System CPU:").pack(side=tk.LEFT, padx=5)
-        self.system_cpu_var = tk.StringVar(value="0%")
-        self.system_cpu_label = ttk.Label(system_frame, textvariable=self.system_cpu_var, width=8, style="Normal.TLabel")
-        self.system_cpu_label.pack(side=tk.LEFT, padx=5)
-        
-        ttk.Label(system_frame, text="System RAM:").pack(side=tk.LEFT, padx=5)
-        self.system_ram_var = tk.StringVar(value="0 MB / 0 GB")
-        self.system_ram_label = ttk.Label(system_frame, textvariable=self.system_ram_var, width=16, style="Normal.TLabel")
-        self.system_ram_label.pack(side=tk.LEFT, padx=5)
+        # Create footer for system resources
+        self.create_footer(main_frame)
         
         # Populate device list
         self.refresh_devices()
@@ -484,8 +539,58 @@ class RecorderGUI:
         # Start resource monitoring
         self.start_resource_monitor()
     
+    def _create_info_row(self, parent, label_text, var_name, default_value):
+        """Create a row with a label and value in the info section."""
+        frame = ttk.Frame(parent)
+        frame.pack(fill=tk.X, pady=2)
+        
+        ttk.Label(frame, text=label_text, font=("", 9, "bold")).pack(side=tk.LEFT, padx=5)
+        
+        setattr(self, var_name, tk.StringVar(value=default_value))
+        label = ttk.Label(frame, textvariable=getattr(self, var_name))
+        label.pack(side=tk.LEFT, padx=5)
+        
+        # Store label reference
+        self.labels[var_name] = label
+        
+        return frame
+    
+    def create_footer(self, parent):
+        """Create a fixed footer with system resource information."""
+        # Footer frame
+        footer_frame = ttk.Frame(parent, padding="5")
+        footer_frame.pack(fill=tk.X, side=tk.BOTTOM, pady=5)
+        
+        # Add separator above footer
+        ttk.Separator(parent, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=5)
+        
+        # System resources in footer
+        # App CPU usage
+        ttk.Label(footer_frame, text="App CPU:", font=("", 8)).pack(side=tk.LEFT, padx=(5, 0))
+        self.cpu_var = tk.StringVar(value="0%")
+        self.cpu_label = ttk.Label(footer_frame, textvariable=self.cpu_var, width=6, style="Normal.TLabel", font=("", 8))
+        self.cpu_label.pack(side=tk.LEFT, padx=(0, 10))
+        
+        # System CPU usage
+        ttk.Label(footer_frame, text="System CPU:", font=("", 8)).pack(side=tk.LEFT, padx=(5, 0))
+        self.system_cpu_var = tk.StringVar(value="0%")
+        self.system_cpu_label = ttk.Label(footer_frame, textvariable=self.system_cpu_var, width=6, style="Normal.TLabel", font=("", 8))
+        self.system_cpu_label.pack(side=tk.LEFT, padx=(0, 10))
+        
+        # App RAM usage
+        ttk.Label(footer_frame, text="App RAM:", font=("", 8)).pack(side=tk.LEFT, padx=(5, 0))
+        self.ram_var = tk.StringVar(value="0 MB")
+        self.ram_label = ttk.Label(footer_frame, textvariable=self.ram_var, width=8, style="Normal.TLabel", font=("", 8))
+        self.ram_label.pack(side=tk.LEFT, padx=(0, 10))
+        
+        # System RAM usage
+        ttk.Label(footer_frame, text="System RAM:", font=("", 8)).pack(side=tk.LEFT, padx=(5, 0))
+        self.system_ram_var = tk.StringVar(value="0 MB / 0 GB")
+        self.system_ram_label = ttk.Label(footer_frame, textvariable=self.system_ram_var, width=16, style="Normal.TLabel", font=("", 8))
+        self.system_ram_label.pack(side=tk.LEFT, padx=(0, 5))
+    
     def _create_colored_styles(self):
-        """Create ttk styles for colored labels."""
+        """Create ttk styles for colored labels and better UI appearance."""
         style = ttk.Style()
         
         # Create styles for different colors
@@ -493,6 +598,17 @@ class RecorderGUI:
         style.configure("Green.TLabel", foreground="green")
         style.configure("Orange.TLabel", foreground="orange")
         style.configure("Red.TLabel", foreground="red")
+        
+        # Create styles for headers and titles
+        style.configure("Header.TLabel", font=("", 10, "bold"))
+        style.configure("Title.TLabel", font=("", 12, "bold"))
+        
+        # Create styles for frames
+        style.configure("TLabelframe", font=("", 10, "bold"))
+        style.configure("TLabelframe.Label", font=("", 10, "bold"))
+        
+        # Create styles for buttons
+        style.configure("TButton", font=("", 9))
     
     def refresh_devices(self):
         """Refresh the list of available audio devices."""
@@ -549,8 +665,33 @@ class RecorderGUI:
         # Set device
         if self.recorder.set_device(device_index):
             self.log(f"Set recording device to {device_name}")
+            
+            # Force immediate dB meter update
+            self._force_db_meter_update()
         else:
             messagebox.showerror("Error", "Failed to set recording device")
+    
+    def _force_db_meter_update(self):
+        """Force an immediate update of the dB meter."""
+        try:
+            # Reset the last update time to force update
+            self.last_db_update = 0
+            
+            # When not recording, get audio level from device directly
+            level = self.recorder.get_device_level()
+            
+            # Update meter with the level
+            self.db_meter.set_level(level)
+            
+            # Only show dB value if we have a valid level
+            if level > 0:
+                # Estimate dB from level
+                db = (level * 60) - 60
+                self.db_level_var.set(f"{db:.1f} dB")
+            else:
+                self.db_level_var.set("-∞ dB")
+        except Exception as e:
+            logger.error(f"Error forcing dB meter update: {e}")
     
     def _on_format_change(self, event):
         """Handle format selection changes."""
@@ -577,6 +718,9 @@ class RecorderGUI:
         
         # Update quality radio buttons state
         self._on_format_change(None)
+        
+        # Immediately update storage-related stats
+        self._update_storage_stats()
     
     def set_audio_quality(self):
         """Set the audio quality."""
@@ -584,6 +728,8 @@ class RecorderGUI:
         self.recorder.config["audio"]["quality"] = quality
         if self.recorder._save_config():
             self.log(f"Set audio quality to {quality}")
+            # Immediately update storage-related stats
+            self._update_storage_stats()
         else:
             messagebox.showerror("Error", "Failed to set audio quality")
     
@@ -592,6 +738,8 @@ class RecorderGUI:
         mono = self.mono_var.get()
         if self.recorder.set_mono(mono):
             self.log(f"Set recording mode to {'mono' if mono else 'stereo'}")
+            # Immediately update storage-related stats
+            self._update_storage_stats()
         else:
             messagebox.showerror("Error", "Failed to set recording mode")
     
@@ -675,6 +823,12 @@ class RecorderGUI:
     def save_settings(self):
         """Save settings."""
         try:
+            # Store original values to check for changes
+            original_retention = self.recorder.config["general"]["retention_days"]
+            original_recording_hours = self.recorder.config["general"]["recording_hours"]
+            original_format = self.recorder.config["audio"]["format"]
+            original_quality = self.recorder.config["audio"]["quality"]
+            
             # Update config
             self.recorder.config["general"]["retention_days"] = self.retention_var.get()
             self.recorder.config["general"]["recording_hours"] = self.block_var.get()
@@ -693,6 +847,14 @@ class RecorderGUI:
                 # Create recordings directory
                 os.makedirs(self.recorder.config["paths"]["recordings_dir"], exist_ok=True)
                 
+                # Check if storage-related settings changed
+                if (original_retention != self.recorder.config["general"]["retention_days"] or
+                    original_recording_hours != self.recorder.config["general"]["recording_hours"] or
+                    original_format != self.recorder.config["audio"]["format"] or
+                    original_quality != self.recorder.config["audio"]["quality"]):
+                    # Update storage stats immediately
+                    self._update_storage_stats()
+                
                 # Log
                 self.log("Settings saved")
             else:
@@ -708,7 +870,11 @@ class RecorderGUI:
         )
         
         if directory:
+            # Update directory variable
             self.dir_var.set(directory)
+            
+            # Update folder size immediately
+            self._update_folder_stats()
     
     def open_directory(self):
         """Open recordings directory."""
@@ -732,106 +898,134 @@ class RecorderGUI:
     def update_status(self):
         """Update status display."""
         try:
-            # Get status
-            status = self.recorder.get_status()
-            
-            # Update status label
-            if status["recording"]:
-                if status["paused"]:
-                    self.status_var.set("Paused")
-                    self.status_label.config(foreground="orange")
+            # Get recorder status - only do this every second to reduce overhead
+            current_time = int(time.time())
+            if not hasattr(self, 'last_status_update') or current_time - self.last_status_update >= 1:
+                self.last_status_update = current_time
+                status = self.recorder.get_status()
+                
+                # Update status label
+                self.status_var.set(status["status"])
+                
+                # Set status label color
+                if status["status"] == "Recording":
+                    self.status_label.configure(foreground="green")
+                elif status["status"] == "Paused":
+                    self.status_label.configure(foreground="orange")
                 else:
-                    self.status_var.set("Recording")
-                    self.status_label.config(foreground="green")
-            else:
-                self.status_var.set("Stopped")
-                self.status_label.config(foreground="red")
+                    self.status_label.configure(foreground="black")
+                
+                # Update device label
+                if status["device"]:
+                    self.device_var.set(status["device"])
+                
+                # Update recording time
+                if status["recording_time"]:
+                    hours, remainder = divmod(int(status["recording_time"]), 3600)
+                    minutes, seconds = divmod(remainder, 60)
+                    self.recording_time_var.set(f"{hours:02d}:{minutes:02d}:{seconds:02d}")
+                else:
+                    self.recording_time_var.set("00:00:00")
+                
+                # Update time until next block
+                if status["next_block_time"]:
+                    hours, remainder = divmod(int(status["next_block_time"]), 3600)
+                    minutes, seconds = divmod(remainder, 60)
+                    self.next_block_var.set(f"{hours:02d}:{minutes:02d}:{seconds:02d}")
+                else:
+                    self.next_block_var.set("00:00:00")
+                
+                # Update current block size
+                if status["recording"] or status["paused"]:
+                    block_size = self.recorder.get_current_block_size()
+                    self.block_size_var.set(self.recorder.format_file_size(block_size))
+                else:
+                    self.block_size_var.set("0 bytes")
             
-            # Update device label
-            if status["device_name"] != "Unknown":
-                self.device_var.set(f"Device: {status['device_name']}")
-            else:
-                self.device_var.set("No device selected")
+            # Update less frequently changing stats (every 10 seconds)
+            if not hasattr(self, 'last_stats_update') or current_time - self.last_stats_update >= 10:
+                self.last_stats_update = current_time
                 
-            # Update storage information
-            if "current_block_size" in status:
-                self.block_size_var.set(self.recorder.format_file_size(status["current_block_size"]))
-            
-            if "estimated_block_size" in status:
-                self.block_estimate_var.set(self.recorder.format_file_size(status["estimated_block_size"]))
+                # Update estimated block size
+                block_size = self.recorder.calculate_block_size()
+                self.block_estimate_var.set(self.recorder.format_file_size(block_size))
                 
-            if "estimated_day_size" in status:
-                self.day_size_var.set(self.recorder.format_file_size(status["estimated_day_size"]))
+                # Update daily storage estimate
+                day_size = self.recorder.calculate_day_size()
+                self.day_size_var.set(self.recorder.format_file_size(day_size))
                 
-            if "estimated_90day_size" in status:
-                self.storage_estimate_var.set(self.recorder.format_file_size(status["estimated_90day_size"]))
+                # Update 90-day storage estimate
+                storage_size = self.recorder.calculate_90day_size()
+                self.storage_estimate_var.set(self.recorder.format_file_size(storage_size))
                 
-            if "recordings_folder_size" in status:
-                self.folder_size_var.set(self.recorder.format_file_size(status["recordings_folder_size"]))
+                # Update recordings folder size
+                folder_size = self.recorder.get_recordings_folder_size()
+                self.folder_size_var.set(self.recorder.format_file_size(folder_size))
                 
-            if "free_disk_space" in status:
-                free_space = status["free_disk_space"]
+                # Update free disk space
+                free_space = self.recorder.get_free_disk_space()
                 self.free_space_var.set(self.recorder.format_file_size(free_space))
                 
-                # Check for critically low disk space (less than 5GB or 5% of needed space for retention)
-                if "retention_fit" in status:
-                    retention_fit = status["retention_fit"]
-                    critical_space = min(5 * 1024 * 1024 * 1024, retention_fit["needed_space"] * 0.05)
-                    
-                    if free_space < critical_space:
-                        # Show warning dialog (but not more than once every 30 minutes)
-                        current_time = time.time()
-                        if not hasattr(self, '_last_disk_warning_time') or current_time - self._last_disk_warning_time > 1800:
-                            self._last_disk_warning_time = current_time
-                            self.log("CRITICAL: Disk space is critically low!")
-                            
-                            # Show warning in a separate thread to avoid blocking the UI
-                            threading.Thread(target=self._show_disk_warning, args=(free_space,), daemon=True).start()
-                
-            # Update retention fit information
-            if "retention_fit" in status:
-                fit_info = status["retention_fit"]
-                if fit_info["fits"]:
-                    self.retention_fit_var.set(f"Yes ({fit_info['percentage']:.1f}% of free space)")
-                    self.retention_fit_label.config(foreground="green")
+                # Update retention fit
+                retention_fit = self.recorder.would_retention_fit()
+                if retention_fit["fits"]:
+                    self.retention_fit_var.set(f"Yes (Using {retention_fit['percentage']:.1f}% of free space)")
+                    self.retention_fit_label.configure(style="Green.TLabel")
                 else:
-                    self.retention_fit_var.set(f"No (Need {self.recorder.format_file_size(fit_info['needed_space'])})")
-                    self.retention_fit_label.config(foreground="red")
+                    self.retention_fit_var.set(f"No (Requires {retention_fit['percentage']:.1f}% of free space)")
+                    self.retention_fit_label.configure(style="Red.TLabel")
                     
-                    # Log warning if retention won't fit
-                    if not hasattr(self, '_retention_warning_logged') or not self._retention_warning_logged:
-                        if not fit_info["fits"]:
-                            self.log("WARNING: Retention period would not fit in available disk space")
-                            self._retention_warning_logged = True
-                        else:
-                            self._retention_warning_logged = False
+                    # Show warning if disk space is low
+                    if free_space < retention_fit["needed_space"]:
+                        self._show_disk_warning(free_space)
             
-            # Update recording time
-            if status["recording"] and not status["paused"]:
-                if not hasattr(self, 'recording_start_time') or self.recording_start_time is None:
-                    self.recording_start_time = time.time()
+            # Update dB meter (every 200ms for better performance)
+            # Only update the dB meter if it's time
+            if not hasattr(self, 'last_db_update') or time.time() - self.last_db_update >= 0.2:
+                self.last_db_update = time.time()
                 
-                elapsed = time.time() - self.recording_start_time
-                hours, remainder = divmod(int(elapsed), 3600)
-                minutes, seconds = divmod(remainder, 60)
-                self.recording_time_var.set(f"{hours:02d}:{minutes:02d}:{seconds:02d}")
-            else:
-                self.recording_time_var.set("00:00:00")
-                self.recording_start_time = None
+                # Always try to update the dB meter
+                try:
+                    # Check if we're recording
+                    if self.recorder.recording:
+                        # Get audio level using the recording method
+                        rms, db, level = self.recorder.get_audio_level()
+                        
+                        if rms > 0:
+                            # Update meter
+                            self.db_meter.set_level(level)
+                            
+                            # Update dB text
+                            self.db_level_var.set(f"{db:.1f} dB")
+                        else:
+                            self.db_meter.set_level(0)
+                            self.db_level_var.set("-∞ dB")
+                    else:
+                        # When not recording, get audio level from device directly
+                        level = self.recorder.get_device_level()
+                        
+                        # Update meter with the level
+                        self.db_meter.set_level(level)
+                        
+                        # Only show dB value if we have a valid level
+                        if level > 0:
+                            # Estimate dB from level
+                            db = (level * 60) - 60
+                            self.db_level_var.set(f"{db:.1f} dB")
+                        else:
+                            self.db_level_var.set("-∞ dB")
+                except Exception as e:
+                    # Log the error but don't crash
+                    logger.error(f"Error updating dB meter: {e}")
+                    self.db_meter.set_level(0)
+                    self.db_level_var.set("-∞ dB")
             
-            # Update time until next block
-            if "time_until_next_block" in status and status["recording"] and not status["paused"]:
-                seconds_left = int(status["time_until_next_block"])
-                hours, remainder = divmod(seconds_left, 3600)
-                minutes, seconds = divmod(remainder, 60)
-                self.next_block_var.set(f"{hours:02d}:{minutes:02d}:{seconds:02d}")
-            else:
-                self.next_block_var.set("00:00:00")
+            # Schedule next update (300ms is a good balance between responsiveness and performance)
+            self.root.after(300, self.update_status)
         except Exception as e:
             logger.error(f"Error updating status: {e}")
-        
-        # Schedule next update
-        self.root.after(1000, self.update_status)
+            # Schedule next update even if there was an error
+            self.root.after(1000, self.update_status)
     
     def start_resource_monitor(self):
         """Start monitoring system resources."""
@@ -844,38 +1038,37 @@ class RecorderGUI:
     def update_resource_monitor(self):
         """Update resource monitor display."""
         try:
-            # Get CPU usage (percent)
-            cpu_percent = self.process.cpu_percent(interval=0)
+            # Get CPU usage (percent) - interval=None to avoid blocking
+            cpu_percent = self.process.cpu_percent(interval=None)
             self.cpu_var.set(f"{cpu_percent:.1f}%")
-            self.cpu_progress['value'] = cpu_percent
             
             # Set color based on CPU usage
             self._set_label_color(self.cpu_label, cpu_percent)
             
-            # Get memory usage (MB)
+            # Get memory usage (MB) - only once per update
             memory_info = self.process.memory_info()
             memory_mb = memory_info.rss / (1024 * 1024)
             self.ram_var.set(f"{memory_mb:.1f} MB")
             
-            # Calculate RAM percentage (for progress bar)
-            total_ram = psutil.virtual_memory().total / (1024 * 1024)
-            ram_percent = (memory_mb / total_ram) * 100
-            self.ram_progress['value'] = ram_percent
+            # Get system memory info - only once per update
+            system_ram = psutil.virtual_memory()
+            total_ram = system_ram.total / (1024 * 1024)
             
             # Set color based on RAM usage
+            ram_percent = (memory_mb / total_ram) * 100
             self._set_label_color(self.ram_label, ram_percent)
             
-            # Get system-wide CPU and RAM usage
-            system_cpu = psutil.cpu_percent(interval=0)
+            # Get system-wide CPU usage - non-blocking
+            system_cpu = psutil.cpu_percent(interval=None)
             self.system_cpu_var.set(f"{system_cpu:.1f}%")
             
             # Set color based on system CPU usage
             self._set_label_color(self.system_cpu_label, system_cpu)
             
-            system_ram = psutil.virtual_memory()
+            # Format system RAM usage
             used_ram_gb = system_ram.used / (1024 * 1024 * 1024)
             total_ram_gb = system_ram.total / (1024 * 1024 * 1024)
-            self.system_ram_var.set(f"{used_ram_gb:.1f} GB / {total_ram_gb:.1f} GB")
+            self.system_ram_var.set(f"{used_ram_gb:.1f}/{total_ram_gb:.1f} GB")
             
             # Set color based on system RAM usage percentage
             system_ram_percent = system_ram.percent
@@ -883,8 +1076,8 @@ class RecorderGUI:
         except Exception as e:
             logger.error(f"Error updating resource monitor: {e}")
         
-        # Schedule next update
-        self.root.after(2000, self.update_resource_monitor)
+        # Schedule next update (5 seconds is enough for system stats)
+        self.root.after(5000, self.update_resource_monitor)
     
     def _set_label_color(self, label, percent):
         """Set label color based on usage percentage."""
@@ -967,6 +1160,69 @@ class RecorderGUI:
                 self.root.destroy()
         else:
             self.root.destroy()
+    
+    def _update_storage_stats(self):
+        """Update all storage-related statistics immediately."""
+        try:
+            # Update estimated block size
+            block_size = self.recorder.calculate_block_size()
+            self.block_estimate_var.set(self.recorder.format_file_size(block_size))
+            
+            # Update daily storage estimate
+            day_size = self.recorder.calculate_day_size()
+            self.day_size_var.set(self.recorder.format_file_size(day_size))
+            
+            # Update 90-day storage estimate
+            storage_size = self.recorder.calculate_90day_size()
+            self.storage_estimate_var.set(self.recorder.format_file_size(storage_size))
+            
+            # Update recordings folder size
+            folder_size = self.recorder.get_recordings_folder_size()
+            self.folder_size_var.set(self.recorder.format_file_size(folder_size))
+            
+            # Update free disk space
+            free_space = self.recorder.get_free_disk_space()
+            self.free_space_var.set(self.recorder.format_file_size(free_space))
+            
+            # Update retention fit
+            retention_fit = self.recorder.would_retention_fit()
+            if retention_fit["fits"]:
+                self.retention_fit_var.set(f"Yes (Using {retention_fit['percentage']:.1f}% of free space)")
+                self.retention_fit_label.configure(style="Green.TLabel")
+            else:
+                self.retention_fit_var.set(f"No (Requires {retention_fit['percentage']:.1f}% of free space)")
+                self.retention_fit_label.configure(style="Red.TLabel")
+                
+                # Show warning if disk space is low
+                if free_space < retention_fit["needed_space"]:
+                    self._show_disk_warning(free_space)
+                    
+            # Update last stats update time to prevent immediate re-update
+            self.last_stats_update = int(time.time())
+        except Exception as e:
+            logger.error(f"Error updating storage stats: {e}")
+    
+    def _update_folder_stats(self):
+        """Update folder-related statistics immediately."""
+        try:
+            # Update recordings folder size
+            folder_size = self.recorder.get_recordings_folder_size()
+            self.folder_size_var.set(self.recorder.format_file_size(folder_size))
+            
+            # Update free disk space
+            free_space = self.recorder.get_free_disk_space()
+            self.free_space_var.set(self.recorder.format_file_size(free_space))
+            
+            # Update retention fit
+            retention_fit = self.recorder.would_retention_fit()
+            if retention_fit["fits"]:
+                self.retention_fit_var.set(f"Yes (Using {retention_fit['percentage']:.1f}% of free space)")
+                self.retention_fit_label.configure(style="Green.TLabel")
+            else:
+                self.retention_fit_var.set(f"No (Requires {retention_fit['percentage']:.1f}% of free space)")
+                self.retention_fit_label.configure(style="Red.TLabel")
+        except Exception as e:
+            logger.error(f"Error updating folder stats: {e}")
 
 def main():
     """Main entry point for the GUI."""

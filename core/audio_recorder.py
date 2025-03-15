@@ -48,6 +48,7 @@ class AudioRecorder:
         self.cleanup_thread = None
         self.device_index = self._get_device_index()
         self.pid = os.getpid()
+        self.recording_start_time = None
         self.monitor_stream = None
         self.monitor_thread = None
         self.current_block_size = 0  # Track current block size
@@ -240,6 +241,9 @@ class AudioRecorder:
         # Start monitor
         self._start_monitor()
         
+        # Update recording start time
+        self.recording_start_time = time.time()
+        
         logger.info("Recording started")
         return True
     
@@ -297,6 +301,9 @@ class AudioRecorder:
         # Remove lock file
         self._cleanup_lock()
         
+        # Update recording start time
+        self.recording_start_time = None
+        
         logger.info("Recording stopped")
         return True
     
@@ -322,11 +329,26 @@ class AudioRecorder:
     
     def get_status(self):
         """Get the current status of the recorder."""
+        # Determine status text
+        status_text = "Stopped"
+        if self.recording:
+            if self.paused:
+                status_text = "Paused"
+            else:
+                status_text = "Recording"
+        
+        # Calculate recording time
+        recording_time = 0
+        if self.recording:
+            if hasattr(self, 'recording_start_time') and self.recording_start_time:
+                recording_time = time.time() - self.recording_start_time
+        
         status = {
+            "status": status_text,
             "recording": self.recording,
             "paused": self.paused,
             "device_index": self.device_index,
-            "device_name": "Unknown",
+            "device": None,  # Will be set below
             "sample_rate": self.config["audio"]["sample_rate"],
             "channels": self.config["audio"]["channels"],
             "format": self.config["audio"]["format"],
@@ -337,14 +359,8 @@ class AudioRecorder:
             "recordings_dir": self.config["paths"]["recordings_dir"],
             "retention_days": self.config["general"]["retention_days"],
             "recording_hours": self.config["general"]["recording_hours"],
-            "current_block_size": self.get_current_block_size(),
-            "estimated_90day_size": self.calculate_90day_size(),
-            "estimated_day_size": self.calculate_day_size(),
-            "estimated_block_size": self.calculate_block_size(),
-            "recordings_folder_size": self.get_recordings_folder_size(),
-            "free_disk_space": self.get_free_disk_space(),
-            "retention_fit": self.would_retention_fit(),  # Always include retention fit info
-            "time_until_next_block": self.get_time_until_next_block()  # Add time until next block
+            "recording_time": recording_time,
+            "next_block_time": self.get_time_until_next_block() if self.recording else 0
         }
         
         # Get device name
@@ -352,10 +368,10 @@ class AudioRecorder:
             try:
                 audio = self._get_pyaudio_instance()
                 device_info = audio.get_device_info_by_index(self.device_index)
-                status["device_name"] = device_info["name"]
+                status["device"] = device_info["name"]
                 audio.terminate()
             except:
-                pass
+                status["device"] = f"Device {self.device_index}"
         
         return status
     
@@ -602,6 +618,10 @@ class AudioRecorder:
     def _record_audio(self):
         """Record audio from the selected device."""
         try:
+            # Initialize visualization buffer
+            self._viz_buffer = bytearray()
+            self._viz_buffer_size = self.config["audio"]["sample_rate"] * 2 * 0.1  # 100ms of audio
+            
             # Open stream
             if HAS_WASAPI and hasattr(self.audio, "is_loopback") and self.audio.is_loopback(self.device_index):
                 # Open loopback stream
@@ -654,6 +674,11 @@ class AudioRecorder:
                         
                         # Convert back to bytes
                         data = audio_data.tobytes()
+                    
+                    # Update visualization buffer
+                    self._viz_buffer.extend(data)
+                    if len(self._viz_buffer) > self._viz_buffer_size:
+                        self._viz_buffer = self._viz_buffer[-int(self._viz_buffer_size):]
                     
                     # Add to queue
                     self.audio_queue.put(data)
@@ -1030,4 +1055,168 @@ class AudioRecorder:
             "free_space": free_space,
             "needed_space": needed_space,
             "percentage": min(percentage, 100)  # Cap at 100%
-        } 
+        }
+        
+    def get_audio_level(self):
+        """Get the current audio level for visualization.
+        
+        Returns:
+            tuple: (rms, db, level) where:
+                rms is the root mean square of the audio samples
+                db is the decibel level (-60 to 0)
+                level is the normalized level (0 to 1)
+        """
+        # Check if we're recording and have data
+        if not self.recording or not hasattr(self, '_viz_buffer') or len(self._viz_buffer) == 0:
+            return (0, -60, 0)
+        
+        # Check if we need to recalculate (cache results to avoid recalculating too often)
+        current_time = time.time()
+        if hasattr(self, '_last_level_calc') and current_time - self._last_level_calc < 0.1:
+            # Return cached value if it's recent enough
+            if hasattr(self, '_cached_level'):
+                return self._cached_level
+        
+        try:
+            # Convert to numpy array
+            samples = np.frombuffer(self._viz_buffer, dtype=np.int16)
+            
+            # Calculate RMS value
+            rms = np.sqrt(np.mean(samples.astype(np.float32)**2))
+            
+            # Convert to dB (relative to full scale)
+            if rms > 0:
+                db = 20 * np.log10(rms / 32768)
+                db = max(-60, min(0, db))  # Clamp between -60 and 0 dB
+                
+                # Convert to 0-1 range for meter
+                level = (db + 60) / 60
+                
+                # Debug log (only log occasionally to reduce spam)
+                if not hasattr(self, '_last_level_log') or current_time - self._last_level_log > 1.0:
+                    self._last_level_log = current_time
+                    logger.debug(f"Audio level: RMS={rms:.2f}, dB={db:.2f}, level={level:.2f}")
+                
+                # Cache the result
+                self._last_level_calc = current_time
+                self._cached_level = (rms, db, level)
+                
+                return (rms, db, level)
+            
+            # Silent case
+            if not hasattr(self, '_last_level_log') or current_time - self._last_level_log > 1.0:
+                self._last_level_log = current_time
+                logger.debug("Audio level: silent (RMS=0)")
+            
+            # Cache the result
+            self._last_level_calc = current_time
+            self._cached_level = (0, -60, 0)
+            
+            return (0, -60, 0)
+        except Exception as e:
+            logger.error(f"Error getting audio level: {e}")
+            return (0, -60, 0)
+    
+    def get_device_level(self):
+        """Get the current audio level from the device even when not recording.
+        
+        Returns:
+            float: Audio level normalized between 0 and 1
+        """
+        if self.device_index is None:
+            return 0
+            
+        try:
+            # Create a temporary stream to get audio data
+            pa = get_pyaudio_instance()[0]  # Get the first element (the PyAudio instance)
+            
+            # Get device info
+            device_info = pa.get_device_info_by_index(self.device_index)
+            sample_rate = int(device_info.get('defaultSampleRate', 44100))
+            channels = device_info.get('maxInputChannels', 1)
+            
+            # Create a short stream to get a sample
+            stream = None
+            try:
+                # Use WASAPI loopback if available and device is a loopback device
+                if HAS_WASAPI and self._is_loopback_device(self.device_index):
+                    stream = pa.open(
+                        format=pyaudio.paInt16,
+                        channels=channels,
+                        rate=sample_rate,
+                        input=True,
+                        input_device_index=self.device_index,
+                        frames_per_buffer=1024,
+                        as_loopback=True
+                    )
+                else:
+                    stream = pa.open(
+                        format=pyaudio.paInt16,
+                        channels=channels,
+                        rate=sample_rate,
+                        input=True,
+                        input_device_index=self.device_index,
+                        frames_per_buffer=1024
+                    )
+                
+                # Read a small chunk of data
+                data = stream.read(1024, exception_on_overflow=False)
+                
+                # Convert to numpy array
+                samples = np.frombuffer(data, dtype=np.int16)
+                
+                # Convert to mono if needed
+                if channels > 1:
+                    samples = samples.reshape(-1, channels)
+                    samples = samples.mean(axis=1)
+                
+                # Calculate RMS value
+                rms = np.sqrt(np.mean(samples.astype(np.float32)**2))
+                
+                # Convert to dB (relative to full scale)
+                if rms > 0:
+                    db = 20 * np.log10(rms / 32768)
+                    db = max(-60, min(0, db))  # Clamp between -60 and 0 dB
+                    
+                    # Convert to 0-1 range for meter
+                    level = (db + 60) / 60
+                    
+                    # Log occasionally for debugging
+                    current_time = time.time()
+                    if not hasattr(self, '_last_device_level_log') or current_time - self._last_device_level_log > 1.0:
+                        self._last_device_level_log = current_time
+                        logger.debug(f"Device level: RMS={rms:.2f}, dB={db:.2f}, level={level:.2f}")
+                    
+                    return level
+                
+                return 0
+            finally:
+                # Close stream
+                if stream:
+                    stream.stop_stream()
+                    stream.close()
+                
+                # Terminate PyAudio instance
+                pa.terminate()
+                
+        except Exception as e:
+            logger.debug(f"Error getting device level: {e}")
+            return 0
+    
+    def _is_loopback_device(self, device_index):
+        """Check if a device is a loopback device."""
+        if not HAS_WASAPI:
+            return False
+            
+        try:
+            # Get PyAudio instance
+            if self.audio is None:
+                audio = get_pyaudio_instance()[0]  # Get the first element (the PyAudio instance)
+            else:
+                audio = self.audio
+                
+            # Check if device is a loopback device
+            return audio.is_loopback(device_index)
+        except Exception as e:
+            logger.debug(f"Error checking if device is loopback: {e}")
+            return False 
