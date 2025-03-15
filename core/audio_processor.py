@@ -1,129 +1,205 @@
 """
-Audio processing for the Continuous Audio Recorder.
+Audio processing module for the Continuous Audio Recorder.
 """
 
-import wave
-import numpy as np
 import logging
+import queue
+import time
+import datetime
 
+from core.audio_stream_manager import AudioStreamManager
+from core.audio_file_handler import AudioFileHandler
+from core.audio_level_analyzer import AudioLevelAnalyzer
+
+# Get logger
 logger = logging.getLogger("ContinuousRecorder")
 
 class AudioProcessor:
-    """Processes audio data for recording and monitoring."""
+    """Coordinates audio recording, processing, and file management for the Continuous Audio Recorder."""
     
-    def __init__(self, config):
-        """
-        Initialize the audio processor.
+    def __init__(self, config, device_manager):
+        """Initialize the audio processor.
         
         Args:
-            config: Configuration manager instance
+            config (dict): Configuration dictionary
+            device_manager (DeviceManager): Device manager instance
         """
         self.config = config
-        self.sample_rate = self.config.get("audio", "sample_rate")
-        self.channels = self.config.get("audio", "channels")
-        self.mono = self.config.get("audio", "mono")
-        self.monitor_level = self.config.get("audio", "monitor_level")
+        self.device_manager = device_manager
+        self.recording = False
+        self.paused = False
+        self.recording_start_time = None
+        
+        # Create audio queue for communication between components
+        self.audio_queue = queue.Queue()
+        
+        # Initialize components
+        self.stream_manager = AudioStreamManager(config, device_manager, self.audio_queue)
+        self.file_handler = AudioFileHandler(config, self.audio_queue)
+        self.level_analyzer = AudioLevelAnalyzer()
     
-    def prepare_audio_data(self, audio_data):
+    def start_recording(self):
+        """Start the recording process.
+        
+        Returns:
+            bool: True if successful, False otherwise
         """
-        Prepare audio data for recording.
+        logger.debug("Initializing audio processor components...")
+        if self.recording:
+            logger.warning("Audio processor is already recording")
+            return False
+        
+        # Start stream manager
+        if not self.stream_manager.start_recording():
+            logger.error("Failed to start audio stream")
+            return False
+        
+        # Start file handler
+        if not self.file_handler.start_processing():
+            logger.error("Failed to start audio processing")
+            self.stream_manager.stop_recording()
+            return False
+        
+        # Set recording flags
+        self.recording = True
+        self.paused = False
+        
+        # Update recording start time
+        self.recording_start_time = time.time()
+        
+        logger.info("Audio processor initialized successfully")
+        return True
+    
+    def stop_recording(self):
+        """Stop the recording process.
+        
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        if not self.recording:
+            logger.warning("Audio processor is not recording")
+            return False
+        
+        # Stop recording
+        self.recording = False
+        
+        # Stop stream manager
+        self.stream_manager.stop_recording()
+        
+        # Stop file handler
+        self.file_handler.stop_processing()
+        
+        # Update recording start time
+        self.recording_start_time = None
+        
+        logger.info("Audio processor shutdown complete")
+        return True
+    
+    def pause_recording(self):
+        """Pause the recording process.
+        
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        if not self.recording:
+            logger.warning("Audio processor is not recording")
+            return False
+        
+        self.paused = True
+        self.stream_manager.pause_recording()
+        
+        logger.info("Audio processor paused")
+        return True
+    
+    def resume_recording(self):
+        """Resume the recording process.
+        
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        if not self.recording:
+            logger.warning("Audio processor is not recording")
+            return False
+        
+        self.paused = False
+        self.stream_manager.resume_recording()
+        
+        logger.info("Audio processor resumed")
+        return True
+    
+    def get_time_until_next_block(self):
+        """Calculate the time remaining until the next recording block starts.
+        
+        Returns:
+            float: Time in seconds until the next block
+        """
+        return self.file_handler.get_time_until_next_block()
+    
+    def get_current_block_size(self):
+        """Get the current block file size in bytes.
+        
+        Returns:
+            int: Size in bytes
+        """
+        return self.file_handler.get_current_block_size()
+    
+    def get_audio_level(self):
+        """Get the current audio level for visualization.
+        
+        Returns:
+            tuple: (rms, db, level) where:
+                rms is the root mean square of the audio samples
+                db is the decibel level (-60 to 0)
+                level is the normalized level (0 to 1)
+        """
+        viz_buffer = self.stream_manager.get_visualization_buffer()
+        return self.level_analyzer.get_audio_level(viz_buffer, self.recording)
+    
+    def set_audio_quality(self, quality):
+        """Set audio quality for MP3 conversion.
         
         Args:
-            audio_data: Raw audio data
+            quality (str): Quality setting ('high', 'medium', 'low')
             
         Returns:
-            Processed audio data
+            bool: True if successful, False otherwise
         """
-        # Convert to numpy array
-        data = np.frombuffer(audio_data, dtype=np.int16)
+        if quality not in ["high", "medium", "low"]:
+            logger.error(f"Invalid quality setting: {quality}")
+            return False
         
-        # Apply mono conversion if enabled
-        if self.mono and self.channels > 1:
-            # Reshape data to have channels as the second dimension
-            data = data.reshape(-1, self.channels)
-            
-            # Average across channels
-            data = np.mean(data, axis=1, dtype=np.int16)
-            
-            # Duplicate the mono channel to match the expected format
-            data = np.repeat(data, self.channels)
-        
-        return data.tobytes()
-    
-    def mix_monitor_audio(self, audio_data):
-        """
-        Mix audio data for monitoring.
-        
-        Args:
-            audio_data: Raw audio data
-            
-        Returns:
-            Mixed audio data for monitoring
-        """
-        if self.monitor_level <= 0:
-            return b''
-        
-        # Convert to numpy array
-        data = np.frombuffer(audio_data, dtype=np.int16)
-        
-        # Apply volume scaling
-        data = (data * self.monitor_level).astype(np.int16)
-        
-        return data.tobytes()
-    
-    def get_wave_params(self):
-        """
-        Get wave parameters for recording.
-        
-        Returns:
-            Dictionary of wave parameters
-        """
-        return {
-            'nchannels': 1 if self.mono else self.channels,
-            'sampwidth': 2,  # 16-bit
-            'framerate': self.sample_rate,
-            'comptype': 'NONE',
-            'compname': 'not compressed'
-        }
-    
-    def create_wave_file(self, file_path):
-        """
-        Create a new wave file.
-        
-        Args:
-            file_path: Path to the wave file
-            
-        Returns:
-            Wave file object
-        """
-        wave_file = wave.open(file_path, 'wb')
-        params = self.get_wave_params()
-        wave_file.setparams((
-            params['nchannels'],
-            params['sampwidth'],
-            params['framerate'],
-            0,  # nframes (will be set as data is written)
-            params['comptype'],
-            params['compname']
-        ))
-        return wave_file
+        self.config["audio"]["quality"] = quality
+        return True
     
     def set_mono(self, mono):
-        """
-        Set mono mode.
+        """Set mono/stereo recording mode.
         
         Args:
-            mono: Boolean to enable/disable mono mode
+            mono (bool): True for mono, False for stereo
+            
+        Returns:
+            bool: True if successful, False otherwise
         """
-        self.mono = mono
-        self.config.set("audio", "mono", mono)
-    
-    def set_monitor_level(self, level):
-        """
-        Set monitor level.
+        self.config["audio"]["mono"] = bool(mono)
+        return True
         
-        Args:
-            level: Float between 0.0 and 1.0
+    def get_current_file(self):
+        """Get the current recording file path.
+        
+        Returns:
+            str: Current file path or None if not recording
         """
-        self.monitor_level = max(0.0, min(1.0, level))
-        self.config.set("audio", "monitor_level", self.monitor_level) 
+        if hasattr(self.file_handler, 'current_file'):
+            return self.file_handler.current_file
+        return None
+        
+    @property
+    def audio(self):
+        """Get the PyAudio instance.
+        
+        Returns:
+            PyAudio: PyAudio instance or None if not initialized
+        """
+        if hasattr(self.stream_manager, 'audio'):
+            return self.stream_manager.audio
+        return None 

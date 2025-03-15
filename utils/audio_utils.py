@@ -179,4 +179,131 @@ def convert_to_mp3(wav_file, ffmpeg_path="ffmpeg", quality="high"):
         return None
     except Exception as e:
         logger.error(f"Unexpected error during conversion: {e}")
+        return None
+
+def convert_to_mono(audio_data, channels):
+    """Convert multi-channel audio data to mono.
+    
+    Args:
+        audio_data (bytes): Raw audio data
+        channels (int): Number of channels in the audio data
+        
+    Returns:
+        bytes: Mono audio data
+    """
+    if channels <= 1:
+        return bytes(audio_data)
+        
+    import numpy as np
+    
+    # Make a copy to ensure we don't modify the original data
+    data_copy = bytes(audio_data)
+    
+    # Convert to numpy array
+    samples = np.frombuffer(data_copy, dtype=np.int16).copy()
+    
+    # Reshape to channels
+    samples = samples.reshape(-1, channels)
+    
+    # Average channels
+    mono_samples = np.mean(samples, axis=1, dtype=np.int16)
+    
+    # Convert back to bytes
+    return mono_samples.tobytes()
+
+def calculate_audio_level(audio_data):
+    """Calculate audio level metrics from raw audio data.
+    
+    Args:
+        audio_data (bytes): Raw audio data (16-bit PCM)
+        
+    Returns:
+        tuple: (rms, db, level) where:
+            rms is the root mean square of the audio samples
+            db is the decibel level (-60 to 0)
+            level is the normalized level (0 to 1)
+    """
+    import numpy as np
+    
+    # Make a copy to ensure we don't modify the original data
+    data_copy = bytes(audio_data)
+    
+    # Convert to numpy array
+    samples = np.frombuffer(data_copy, dtype=np.int16).copy()
+    
+    if len(samples) == 0:
+        return (0, -60, 0)
+    
+    # Calculate RMS value
+    rms = np.sqrt(np.mean(samples.astype(np.float32)**2))
+    
+    # Convert to dB (relative to full scale)
+    if rms > 0:
+        db = 20 * np.log10(rms / 32768)
+        db = max(-60, min(0, db))  # Clamp between -60 and 0 dB
+        
+        # Convert to 0-1 range for meter
+        level = (db + 60) / 60
+        
+        return (rms, db, level)
+    
+    # Silent case
+    return (0, -60, 0)
+
+def setup_audio_stream(audio, device_index, config, is_loopback=False):
+    """Set up an audio input stream with the given configuration.
+    
+    Args:
+        audio: PyAudio instance
+        device_index (int): Device index to use
+        config (dict): Configuration dictionary with audio settings
+        is_loopback (bool): Whether to use WASAPI loopback mode
+        
+    Returns:
+        stream: PyAudio stream object or None if failed
+    """
+    import logging
+    logger = logging.getLogger("ContinuousRecorder")
+    
+    # Check if WASAPI is available
+    has_wasapi = False
+    try:
+        import pyaudiowpatch
+        has_wasapi = True
+        pyaudio = pyaudiowpatch
+    except ImportError:
+        import pyaudio as pyaudio_std
+        has_wasapi = False
+        pyaudio = pyaudio_std
+    
+    try:
+        if has_wasapi and is_loopback:
+            # Open loopback stream
+            logger.debug("Opening WASAPI loopback stream")
+            stream = audio.open(
+                format=pyaudio.paInt16,
+                channels=config["audio"]["channels"],
+                rate=config["audio"]["sample_rate"],
+                frames_per_buffer=config["audio"]["chunk_size"],
+                input=True,
+                input_device_index=device_index,
+                as_loopback=True
+            )
+            logger.debug("WASAPI loopback stream opened successfully")
+        else:
+            # Open regular stream
+            logger.debug("Opening regular input stream")
+            stream = audio.open(
+                format=pyaudio.paInt16,
+                channels=config["audio"]["channels"],
+                rate=config["audio"]["sample_rate"],
+                frames_per_buffer=config["audio"]["chunk_size"],
+                input=True,
+                input_device_index=device_index
+            )
+            logger.debug("Regular input stream opened successfully")
+        
+        return stream
+    except Exception as e:
+        logger.error(f"Failed to open audio stream: {e}")
         return None 

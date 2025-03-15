@@ -8,6 +8,7 @@ import signal
 import atexit
 import platform
 import logging
+import time
 
 logger = logging.getLogger("ContinuousRecorder")
 
@@ -128,4 +129,53 @@ def register_exit_handler(cleanup_func):
     Args:
         cleanup_func: Function to call at exit
     """
-    atexit.register(cleanup_func) 
+    atexit.register(cleanup_func)
+
+def get_free_disk_space(path):
+    """Get free disk space for the given path.
+    
+    Args:
+        path (str): Path to check
+        
+    Returns:
+        int: Free space in bytes
+    """
+    if not os.path.exists(path):
+        # If path doesn't exist, use parent directory
+        path = os.path.dirname(path)
+        if not os.path.exists(path):
+            # If parent doesn't exist, use current directory
+            path = os.getcwd()
+    
+    try:
+        if platform.system() == "Windows":
+            import ctypes
+            free_bytes = ctypes.c_ulonglong(0)
+            ctypes.windll.kernel32.GetDiskFreeSpaceExW(
+                ctypes.c_wchar_p(path), None, None, ctypes.pointer(free_bytes)
+            )
+            return free_bytes.value
+        else:
+            # Unix-based systems
+            st = os.statvfs(path)
+            return st.f_bavail * st.f_frsize
+    except Exception as e:
+        logger.error(f"Error getting free disk space: {e}")
+        return 0
+
+def measure_execution_time(func):
+    """Decorator to measure execution time of a function.
+    
+    Args:
+        func: Function to measure
+        
+    Returns:
+        wrapper: Wrapped function
+    """
+    def wrapper(*args, **kwargs):
+        start_time = time.time()
+        result = func(*args, **kwargs)
+        end_time = time.time()
+        logger.debug(f"{func.__name__} executed in {end_time - start_time:.4f} seconds")
+        return result
+    return wrapper 

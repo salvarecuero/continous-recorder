@@ -10,8 +10,18 @@ import platform
 
 logger = logging.getLogger("ContinuousRecorder")
 
-def create_file_path(base_dir, block_start_time, actual_start_time=None):
-    """Create a file path for a recording based on timestamp."""
+def create_file_path(base_dir, block_start_time, actual_start_time=None, recording_hours=3):
+    """Create a file path for a recording based on timestamp.
+    
+    Args:
+        base_dir (str): Base directory for recordings
+        block_start_time (datetime): Start time of the current block
+        actual_start_time (datetime, optional): Actual start time of the recording
+        recording_hours (int, optional): Number of hours per recording block
+        
+    Returns:
+        str: File path for the recording
+    """
     # Create directory structure based on year/month/day
     year_str = block_start_time.strftime("%Y")
     month_str = block_start_time.strftime("%m")
@@ -24,20 +34,20 @@ def create_file_path(base_dir, block_start_time, actual_start_time=None):
     # Determine the actual start time for the recording
     start_time = actual_start_time if actual_start_time else block_start_time
     
-    # Calculate the end of the 3-hour block
-    # First, determine which 3-hour block this belongs to
-    hour = start_time.hour
-    block_number = hour // 3
-    block_end_hour = (block_number + 1) * 3
+    # Calculate the end of the block
+    # First, determine which block this belongs to
+    hour = block_start_time.hour
+    block_number = hour // recording_hours
+    block_end_hour = (block_number + 1) * recording_hours
     
     # Create end time
     if block_end_hour >= 24:
         # If the block ends at or after midnight, we need to move to the next day
-        next_day = start_time + datetime.timedelta(days=1)
+        next_day = block_start_time + datetime.timedelta(days=1)
         end_time = next_day.replace(hour=0, minute=0, second=0)
     else:
-        # Same day, at the end of the 3-hour block
-        end_time = start_time.replace(hour=block_end_hour, minute=0, second=0)
+        # Same day, at the end of the block
+        end_time = block_start_time.replace(hour=block_end_hour, minute=0, second=0)
     
     # Format start and end times for filename
     start_str = start_time.strftime("%Y-%m-%d_%H-%M-%S")
@@ -48,6 +58,24 @@ def create_file_path(base_dir, block_start_time, actual_start_time=None):
     file_path = os.path.join(dir_path, file_name)
     
     return file_path
+
+def format_file_size(size_bytes):
+    """Format file size in human-readable format.
+    
+    Args:
+        size_bytes (int): Size in bytes
+        
+    Returns:
+        str: Formatted size string
+    """
+    if size_bytes < 1024:
+        return f"{size_bytes} bytes"
+    elif size_bytes < 1024 * 1024:
+        return f"{size_bytes / 1024:.2f} KB"
+    elif size_bytes < 1024 * 1024 * 1024:
+        return f"{size_bytes / (1024 * 1024):.2f} MB"
+    else:
+        return f"{size_bytes / (1024 * 1024 * 1024):.2f} GB"
 
 def cleanup_old_recordings(base_dir, retention_days):
     """Delete recordings older than retention_days."""
@@ -201,4 +229,78 @@ def setup_autostart(enable, app_path=None):
         return True
     except Exception as e:
         logger.error(f"Error configuring autostart: {e}")
-        return False 
+        return False
+
+def calculate_block_times(current_time, recording_hours):
+    """Calculate the start and end times for a recording block.
+    
+    Args:
+        current_time (datetime): Current time
+        recording_hours (int): Number of hours per recording block
+        
+    Returns:
+        tuple: (block_start_time, block_end_time)
+    """
+    # Calculate the current block number
+    hour = current_time.hour
+    block_number = hour // recording_hours
+    
+    # Calculate the start of the current block
+    block_start_hour = block_number * recording_hours
+    block_start_time = current_time.replace(hour=block_start_hour, minute=0, second=0, microsecond=0)
+    
+    # Calculate the end of the current block
+    block_end_hour = (block_number + 1) * recording_hours
+    
+    # Create end time
+    if block_end_hour >= 24:
+        # If the block ends at or after midnight, we need to move to the next day
+        next_day = current_time + datetime.timedelta(days=1)
+        block_end_time = next_day.replace(hour=block_end_hour % 24, minute=0, second=0, microsecond=0)
+    else:
+        # Same day, at the end of the block
+        block_end_time = current_time.replace(hour=block_end_hour, minute=0, second=0, microsecond=0)
+    
+    return (block_start_time, block_end_time)
+
+def get_time_until_next_block(current_time, recording_hours):
+    """Calculate the time remaining until the next recording block starts.
+    
+    Args:
+        current_time (datetime): Current time
+        recording_hours (int): Number of hours per recording block
+        
+    Returns:
+        float: Time in seconds until the next block
+    """
+    # Calculate the end of the current block
+    _, block_end_time = calculate_block_times(current_time, recording_hours)
+    
+    # Calculate seconds until next block
+    time_diff = block_end_time - current_time
+    return time_diff.total_seconds()
+
+def create_wave_file(file_path, channels, sample_rate):
+    """Create and initialize a new WAV file.
+    
+    Args:
+        file_path (str): Path to the WAV file
+        channels (int): Number of audio channels
+        sample_rate (int): Sample rate in Hz
+        
+    Returns:
+        wave.Wave_write: Wave file object
+    """
+    import wave
+    import os
+    
+    # Create directory if it doesn't exist
+    os.makedirs(os.path.dirname(file_path), exist_ok=True)
+    
+    # Create wave file
+    wave_file = wave.open(file_path, "wb")
+    wave_file.setnchannels(channels)
+    wave_file.setsampwidth(2)  # 16-bit
+    wave_file.setframerate(sample_rate)
+    
+    return wave_file 
