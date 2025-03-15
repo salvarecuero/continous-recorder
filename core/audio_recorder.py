@@ -616,8 +616,20 @@ class AudioRecorder:
         """Process audio data from the queue."""
         # Initialize variables
         block_start_time = datetime.datetime.now()
-        block_duration = datetime.timedelta(hours=self.config["general"]["recording_hours"])
-        block_end_time = block_start_time + block_duration
+        
+        # Calculate the end of the current 3-hour block
+        hour = block_start_time.hour
+        block_number = hour // 3
+        block_end_hour = (block_number + 1) * 3
+        
+        # Create end time
+        if block_end_hour >= 24:
+            # If the block ends at or after midnight, we need to move to the next day
+            next_day = block_start_time + datetime.timedelta(days=1)
+            block_end_time = next_day.replace(hour=0, minute=0, second=0)
+        else:
+            # Same day, at the end of the 3-hour block
+            block_end_time = block_start_time.replace(hour=block_end_hour, minute=0, second=0)
         
         # Create file path
         file_path = create_file_path(
@@ -655,7 +667,20 @@ class AudioRecorder:
                     
                     # Start new block
                     block_start_time = now
-                    block_end_time = block_start_time + block_duration
+                    
+                    # Calculate the end of the new 3-hour block
+                    hour = block_start_time.hour
+                    block_number = hour // 3
+                    block_end_hour = (block_number + 1) * 3
+                    
+                    # Create end time
+                    if block_end_hour >= 24:
+                        # If the block ends at or after midnight, we need to move to the next day
+                        next_day = block_start_time + datetime.timedelta(days=1)
+                        block_end_time = next_day.replace(hour=0, minute=0, second=0)
+                    else:
+                        # Same day, at the end of the 3-hour block
+                        block_end_time = block_start_time.replace(hour=block_end_hour, minute=0, second=0)
                     
                     # Create file path
                     file_path = create_file_path(
