@@ -116,7 +116,16 @@ class RecorderGUI:
         try:
             self.root = root
             self.root.title("Continuous Audio Recorder")
+            
+            # Hide window during initialization
+            self.root.withdraw()
+            
             self.log("GUI initialization started")
+            
+            # Debounce flag for scrollbar visibility updates
+            self._scrollbar_visibility_update_pending = False
+            self._last_scrollbar_update_time = 0
+            self._SCROLLBAR_DEBOUNCE_MS = 100  # Debounce time in milliseconds
             
             # Set icon if available
             try:
@@ -171,6 +180,9 @@ class RecorderGUI:
             self.log("Resource monitor started")
             
             self.log("GUI initialization completed")
+            
+            # Show window now that everything is initialized
+            self.root.after(100, self.show_window)
         except Exception as e:
             if hasattr(self, 'log'):
                 self.log(f"Error during GUI initialization: {e}")
@@ -195,7 +207,7 @@ class RecorderGUI:
         # Configure canvas
         self.scrollable_frame.bind(
             "<Configure>",
-            lambda e: self._update_scrollregion()
+            lambda e: self._update_scrollregion(update_scrollbar=self.root.state() != 'withdrawn')
         )
         
         # Create window in canvas
@@ -214,17 +226,15 @@ class RecorderGUI:
         # Bind mousewheel for scrolling
         self.bind_mousewheel()
     
-    def _update_scrollregion(self):
+    def _update_scrollregion(self, update_scrollbar=True):
         """Update the scroll region of the canvas."""
-        self.log("Updating scroll region")
         try:
-            self.log("Configuring canvas scrollregion")
             self.canvas.configure(scrollregion=self.canvas.bbox("all"))
-            self.log("Canvas scrollregion configured")
             
-            self.log("Updating scrollbar visibility")
-            self._update_scrollbar_visibility()
-            self.log("Scrollbar visibility updated")
+            # Only update scrollbar visibility if requested
+            # This allows us to avoid redundant updates during initialization
+            if update_scrollbar:
+                self._update_scrollbar_visibility()
         except Exception as e:
             self.log(f"Error in _update_scrollregion: {e}")
             import traceback
@@ -237,26 +247,31 @@ class RecorderGUI:
     
     def _update_scrollbar_visibility(self):
         """Show or hide scrollbar based on content height."""
-        self.log("Updating scrollbar visibility")
+        # Debounce mechanism to prevent multiple calls in quick succession
+        current_time = time.time()
+        debounce_sec = self._SCROLLBAR_DEBOUNCE_MS / 1000
+        if current_time - self._last_scrollbar_update_time < debounce_sec:
+            if not self._scrollbar_visibility_update_pending:
+                self._scrollbar_visibility_update_pending = True
+                self.root.after(self._SCROLLBAR_DEBOUNCE_MS, self._perform_scrollbar_visibility_update)
+            return
+            
+        self._perform_scrollbar_visibility_update()
+    
+    def _perform_scrollbar_visibility_update(self):
+        """Actually perform the scrollbar visibility update."""
+        self._scrollbar_visibility_update_pending = False
+        self._last_scrollbar_update_time = time.time()
         try:
             # Get canvas and content heights
-            self.log("Getting canvas height")
             canvas_height = self.canvas.winfo_height()
-            self.log(f"Canvas height: {canvas_height}")
-            
-            self.log("Getting content height")
             content_height = self.scrollable_frame.winfo_reqheight()
-            self.log(f"Content height: {content_height}")
             
             # Show scrollbar only if content is taller than canvas
-            self.log(f"Comparing heights: content {content_height} vs canvas {canvas_height}")
             if content_height > canvas_height:
-                self.log("Content taller than canvas, showing scrollbar")
                 self.scrollbar.pack(side="right", fill="y")
             else:
-                self.log("Content not taller than canvas, hiding scrollbar")
                 self.scrollbar.pack_forget()
-            self.log("Scrollbar visibility update complete")
         except Exception as e:
             self.log(f"Error in _update_scrollbar_visibility: {e}")
             import traceback
@@ -303,26 +318,20 @@ class RecorderGUI:
         self.log("Adjusting window size")
         try:
             # Update the scrollregion
-            self.log("Calling _update_scrollregion")
-            self._update_scrollregion()
-            self.log("Returned from _update_scrollregion")
+            self._update_scrollregion(update_scrollbar=False)  # Don't update scrollbar during sizing
             
             # Get screen dimensions
-            self.log("Getting screen dimensions")
             screen_width = self.root.winfo_screenwidth()
             screen_height = self.root.winfo_screenheight()
-            self.log(f"Screen dimensions: {screen_width}x{screen_height}")
             
-            # Calculate desired window size (80% of screen size)
-            desired_width = int(screen_width * 0.8)
-            desired_height = int(screen_height * 0.8)
+            # Calculate desired window size (70% of screen size to ensure it fits better)
+            desired_width = int(screen_width * 0.7)
+            desired_height = int(screen_height * 0.7)
             
             # Get the required size for the content
-            self.log("Getting content size")
             self.scrollable_frame.update_idletasks()
             content_width = self.scrollable_frame.winfo_reqwidth()
             content_height = self.scrollable_frame.winfo_reqheight()
-            self.log(f"Content size: {content_width}x{content_height}")
             
             # Add padding for scrollbars and window decorations
             padding_width = 50
@@ -335,23 +344,25 @@ class RecorderGUI:
             # Ensure minimum size
             window_width = max(window_width, 800)  # Minimum width of 800 pixels
             window_height = max(window_height, 600)  # Minimum height of 600 pixels
+            
+            # Ensure window isn't too large for the screen
+            window_width = min(window_width, screen_width - 40)  # Leave 20px margin on each side
+            window_height = min(window_height, screen_height - 80)  # Leave more space for taskbar
+            
+            # Log the calculated window size
             self.log(f"Calculated window size: {window_width}x{window_height}")
             
             # Set window size
-            self.log("Setting window geometry")
             self.root.geometry(f"{window_width}x{window_height}")
             
-            # Center window on screen
-            x = (screen_width - window_width) // 2
-            y = (screen_height - window_height) // 2
-            self.root.geometry(f"+{x}+{y}")
-            self.log(f"Window positioned at {x},{y}")
-            
-            # Update scrollregion again after resize
-            self.log("Updating idletasks")
+            # Update idletasks to apply geometry
             self.root.update_idletasks()
-            self.log("Calling _update_scrollregion again")
-            self._update_scrollregion()
+            
+            # During initialization, we'll handle scrollbar visibility in show_window
+            # so we don't need to call _update_scrollregion again here
+            if self.root.state() != 'withdrawn':
+                self._update_scrollregion(update_scrollbar=True)
+                
             self.log("Window size adjustment complete")
         except Exception as e:
             self.log(f"Error in adjust_window_size: {e}")
@@ -723,7 +734,7 @@ class RecorderGUI:
                     break
         
         # Log
-        self.log(f"Found {len(devices)} audio devices XDDDD")
+        self.log(f"Found {len(devices)} audio devices")
     
     def set_device(self):
         """Set the recording device."""
@@ -1412,6 +1423,82 @@ class RecorderGUI:
         
         logger.warning("No working devices found")
         return False
+    
+    def show_window(self):
+        """Show the main window after initialization is complete."""
+        self.log("Showing main window")
+        
+        # Make sure all widgets are properly sized
+        self.root.update_idletasks()
+        
+        # Update scrollbar visibility one final time before showing window
+        self._perform_scrollbar_visibility_update()
+        
+        # Make sure window size is finalized
+        self.root.update_idletasks()
+        
+        # First position the window off-screen to avoid flicker
+        self.root.geometry(f'+{self.root.winfo_screenwidth()}+{self.root.winfo_screenheight()}')
+        
+        # Show the window (but it's off-screen)
+        self.root.deiconify()
+        
+        # Update to ensure window is fully created
+        self.root.update()
+        
+        # Now center the window with accurate dimensions
+        self.center_window()
+        
+        # Force focus to the window
+        self.root.focus_force()
+        
+        self.log("Main window shown")
+    
+    def center_window(self):
+        """Center the window on the screen and ensure it's fully visible."""
+        # Force update to get accurate dimensions
+        self.root.update()
+        
+        # Get window dimensions
+        width = self.root.winfo_width()
+        height = self.root.winfo_height()
+        
+        # Get screen dimensions
+        screen_width = self.root.winfo_screenwidth()
+        screen_height = self.root.winfo_screenheight()
+        
+        # Log dimensions for debugging
+        self.log(f"Window dimensions: {width}x{height}, Screen dimensions: {screen_width}x{screen_height}")
+        
+        # Calculate center position
+        x = (screen_width // 2) - (width // 2)
+        y = (screen_height // 2) - (height // 2)
+        
+        # Ensure window is fully visible on screen
+        if x < 0:
+            x = 0
+        if y < 0:
+            y = 0
+            
+        # Make sure the window isn't too tall for the screen
+        if height > screen_height - 60:  # Leave space for taskbar
+            # If window is taller than screen, position at top and let it scroll
+            y = 0
+            # Resize to fit screen height
+            new_height = screen_height - 60
+            self.root.geometry(f"{width}x{new_height}")
+            self.log(f"Window resized to fit screen: {width}x{new_height}")
+        
+        # Ensure bottom of window is visible
+        if y + height > screen_height - 30:  # Leave space for taskbar
+            y = max(0, screen_height - height - 30)
+            
+        # Set window position
+        self.log(f"Setting window position to {x},{y}")
+        self.root.geometry(f'+{x}+{y}')
+        
+        # Force update to apply changes
+        self.root.update()
 
 def main():
     """Main entry point for the GUI."""
