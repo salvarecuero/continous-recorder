@@ -210,6 +210,20 @@ class RecorderGUI:
         self.block_size_var = tk.StringVar(value="0 bytes")
         ttk.Label(block_size_frame, textvariable=self.block_size_var).pack(side=tk.LEFT, padx=5)
         
+        # Recording time duration
+        recording_time_frame = ttk.Frame(storage_frame)
+        recording_time_frame.pack(fill=tk.X, pady=2)
+        ttk.Label(recording_time_frame, text="Recording Time:").pack(side=tk.LEFT, padx=5)
+        self.recording_time_var = tk.StringVar(value="00:00:00")
+        ttk.Label(recording_time_frame, textvariable=self.recording_time_var).pack(side=tk.LEFT, padx=5)
+        
+        # Time until next block
+        next_block_frame = ttk.Frame(storage_frame)
+        next_block_frame.pack(fill=tk.X, pady=2)
+        ttk.Label(next_block_frame, text="Time Until Next Block:").pack(side=tk.LEFT, padx=5)
+        self.next_block_var = tk.StringVar(value="00:00:00")
+        ttk.Label(next_block_frame, textvariable=self.next_block_var).pack(side=tk.LEFT, padx=5)
+        
         # Estimated block size
         block_estimate_frame = ttk.Frame(storage_frame)
         block_estimate_frame.pack(fill=tk.X, pady=2)
@@ -595,6 +609,9 @@ class RecorderGUI:
         
         # Start recording
         if self.recorder.start_recording():
+            # Initialize recording start time
+            self.recording_start_time = time.time()
+            
             # Update UI
             self.start_button.config(state=tk.DISABLED)
             self.stop_button.config(state=tk.NORMAL)
@@ -609,6 +626,9 @@ class RecorderGUI:
     def stop_recording(self):
         """Stop recording."""
         if self.recorder.stop_recording():
+            # Reset recording start time
+            self.recording_start_time = None
+            
             # Update UI
             self.start_button.config(state=tk.NORMAL)
             self.stop_button.config(state=tk.DISABLED)
@@ -623,6 +643,10 @@ class RecorderGUI:
     def pause_recording(self):
         """Pause recording."""
         if self.recorder.pause_recording():
+            # Store elapsed time when pausing
+            if hasattr(self, 'recording_start_time') and self.recording_start_time is not None:
+                self.paused_elapsed_time = time.time() - self.recording_start_time
+            
             # Update UI
             self.pause_button.config(state=tk.DISABLED)
             self.resume_button.config(state=tk.NORMAL)
@@ -635,6 +659,10 @@ class RecorderGUI:
     def resume_recording(self):
         """Resume recording."""
         if self.recorder.resume_recording():
+            # Adjust recording start time when resuming
+            if hasattr(self, 'paused_elapsed_time'):
+                self.recording_start_time = time.time() - self.paused_elapsed_time
+            
             # Update UI
             self.pause_button.config(state=tk.NORMAL)
             self.resume_button.config(state=tk.DISABLED)
@@ -777,6 +805,28 @@ class RecorderGUI:
                             self._retention_warning_logged = True
                         else:
                             self._retention_warning_logged = False
+            
+            # Update recording time
+            if status["recording"] and not status["paused"]:
+                if not hasattr(self, 'recording_start_time') or self.recording_start_time is None:
+                    self.recording_start_time = time.time()
+                
+                elapsed = time.time() - self.recording_start_time
+                hours, remainder = divmod(int(elapsed), 3600)
+                minutes, seconds = divmod(remainder, 60)
+                self.recording_time_var.set(f"{hours:02d}:{minutes:02d}:{seconds:02d}")
+            else:
+                self.recording_time_var.set("00:00:00")
+                self.recording_start_time = None
+            
+            # Update time until next block
+            if "time_until_next_block" in status and status["recording"] and not status["paused"]:
+                seconds_left = int(status["time_until_next_block"])
+                hours, remainder = divmod(seconds_left, 3600)
+                minutes, seconds = divmod(remainder, 60)
+                self.next_block_var.set(f"{hours:02d}:{minutes:02d}:{seconds:02d}")
+            else:
+                self.next_block_var.set("00:00:00")
         except Exception as e:
             logger.error(f"Error updating status: {e}")
         

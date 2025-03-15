@@ -343,7 +343,8 @@ class AudioRecorder:
             "estimated_block_size": self.calculate_block_size(),
             "recordings_folder_size": self.get_recordings_folder_size(),
             "free_disk_space": self.get_free_disk_space(),
-            "retention_fit": self.would_retention_fit()  # Always include retention fit info
+            "retention_fit": self.would_retention_fit(),  # Always include retention fit info
+            "time_until_next_block": self.get_time_until_next_block()  # Add time until next block
         }
         
         # Get device name
@@ -357,6 +358,32 @@ class AudioRecorder:
                 pass
         
         return status
+    
+    def get_time_until_next_block(self):
+        """Calculate the time remaining until the next recording block starts."""
+        if not self.recording:
+            return 0
+            
+        now = datetime.datetime.now()
+        recording_hours = self.config["general"]["recording_hours"]
+        
+        # Calculate the end of the current block
+        hour = now.hour
+        block_number = hour // recording_hours
+        block_end_hour = (block_number + 1) * recording_hours
+        
+        # Create end time
+        if block_end_hour >= 24:
+            # If the block ends at or after midnight, we need to move to the next day
+            next_day = now + datetime.timedelta(days=1)
+            block_end_time = next_day.replace(hour=block_end_hour % 24, minute=0, second=0)
+        else:
+            # Same day, at the end of the block
+            block_end_time = now.replace(hour=block_end_hour, minute=0, second=0)
+        
+        # Calculate seconds until next block
+        time_diff = block_end_time - now
+        return time_diff.total_seconds()
     
     def _get_device_index(self):
         """Get the index of the recording device."""
