@@ -265,11 +265,24 @@ class AudioRecorder:
             self.process_thread = None
         
         # Close current file
+        current_file_path = None
         if self.current_wave is not None:
             try:
+                current_file_path = self.current_file
                 self.current_wave.close()
                 self.current_wave = None
                 self.current_file = None
+                
+                # Convert to MP3 if needed
+                if current_file_path and self.config["audio"]["format"] == "mp3":
+                    mp3_file = convert_to_mp3(
+                        current_file_path,
+                        self.config["paths"]["ffmpeg_path"],
+                        self.config["audio"]["quality"]
+                    )
+                    if mp3_file:
+                        logger.info(f"Converted to {mp3_file}")
+                
             except Exception as e:
                 logger.error(f"Error closing wave file: {e}")
         
@@ -316,6 +329,7 @@ class AudioRecorder:
             "device_name": "Unknown",
             "sample_rate": self.config["audio"]["sample_rate"],
             "channels": self.config["audio"]["channels"],
+            "format": self.config["audio"]["format"],
             "quality": self.config["audio"]["quality"],
             "mono": self.config["audio"]["mono"],
             "monitor_level": self.config["audio"]["monitor_level"],

@@ -50,25 +50,30 @@ class StatusPanel:
         self.sample_rate_label = ttk.Label(status_frame, text="44100 Hz")
         self.sample_rate_label.grid(row=2, column=1, sticky=tk.W, padx=5, pady=5)
         
+        # Format
+        ttk.Label(status_frame, text="Format:").grid(row=3, column=0, sticky=tk.W, padx=5, pady=5)
+        self.format_label = ttk.Label(status_frame, text="MP3")
+        self.format_label.grid(row=3, column=1, sticky=tk.W, padx=5, pady=5)
+        
         # Channels
-        ttk.Label(status_frame, text="Channels:").grid(row=3, column=0, sticky=tk.W, padx=5, pady=5)
+        ttk.Label(status_frame, text="Channels:").grid(row=4, column=0, sticky=tk.W, padx=5, pady=5)
         self.channels_label = ttk.Label(status_frame, text="2 (Stereo)")
-        self.channels_label.grid(row=3, column=1, sticky=tk.W, padx=5, pady=5)
+        self.channels_label.grid(row=4, column=1, sticky=tk.W, padx=5, pady=5)
         
         # Quality
-        ttk.Label(status_frame, text="Quality:").grid(row=4, column=0, sticky=tk.W, padx=5, pady=5)
+        ttk.Label(status_frame, text="Quality:").grid(row=5, column=0, sticky=tk.W, padx=5, pady=5)
         self.quality_label = ttk.Label(status_frame, text="High")
-        self.quality_label.grid(row=4, column=1, sticky=tk.W, padx=5, pady=5)
+        self.quality_label.grid(row=5, column=1, sticky=tk.W, padx=5, pady=5)
         
         # Current file
-        ttk.Label(status_frame, text="Current File:").grid(row=5, column=0, sticky=tk.W, padx=5, pady=5)
+        ttk.Label(status_frame, text="Current File:").grid(row=6, column=0, sticky=tk.W, padx=5, pady=5)
         self.file_label = ttk.Label(status_frame, text="None")
-        self.file_label.grid(row=5, column=1, sticky=tk.W, padx=5, pady=5)
+        self.file_label.grid(row=6, column=1, sticky=tk.W, padx=5, pady=5)
         
         # Recording time
-        ttk.Label(status_frame, text="Recording Time:").grid(row=6, column=0, sticky=tk.W, padx=5, pady=5)
+        ttk.Label(status_frame, text="Recording Time:").grid(row=7, column=0, sticky=tk.W, padx=5, pady=5)
         self.time_label = ttk.Label(status_frame, text="00:00:00")
-        self.time_label.grid(row=6, column=1, sticky=tk.W, padx=5, pady=5)
+        self.time_label.grid(row=7, column=1, sticky=tk.W, padx=5, pady=5)
         
         # Storage info frame
         storage_frame = ttk.LabelFrame(self.frame, text="Storage Information")
@@ -153,6 +158,7 @@ class StatusPanel:
         
         # Update audio settings
         self.sample_rate_label.config(text=f"{status['sample_rate']} Hz")
+        self.format_label.config(text=status["format"].upper())
         
         if status["mono"]:
             self.channels_label.config(text="1 (Mono)")

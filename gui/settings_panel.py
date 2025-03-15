@@ -6,6 +6,38 @@ import os
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 
+class Tooltip:
+    """Simple tooltip implementation for tkinter widgets."""
+    
+    def __init__(self, widget, text):
+        """Initialize tooltip for a widget."""
+        self.widget = widget
+        self.text = text
+        self.tooltip = None
+        self.widget.bind("<Enter>", self.show_tooltip)
+        self.widget.bind("<Leave>", self.hide_tooltip)
+    
+    def show_tooltip(self, event=None):
+        """Show the tooltip."""
+        x, y, _, _ = self.widget.bbox("insert")
+        x += self.widget.winfo_rootx() + 25
+        y += self.widget.winfo_rooty() + 25
+        
+        # Create tooltip window
+        self.tooltip = tk.Toplevel(self.widget)
+        self.tooltip.wm_overrideredirect(True)
+        self.tooltip.wm_geometry(f"+{x}+{y}")
+        
+        # Create tooltip content
+        label = ttk.Label(self.tooltip, text=self.text, background="#ffffe0", relief="solid", borderwidth=1)
+        label.pack()
+    
+    def hide_tooltip(self, event=None):
+        """Hide the tooltip."""
+        if self.tooltip:
+            self.tooltip.destroy()
+            self.tooltip = None
+
 class SettingsPanel:
     """Panel for configuring recorder settings."""
     
@@ -50,23 +82,33 @@ class SettingsPanel:
         audio_frame = ttk.LabelFrame(self.frame, text="Audio Settings")
         audio_frame.pack(fill=tk.X, padx=5, pady=5)
         
+        # Format selection
+        ttk.Label(audio_frame, text="Format:").grid(row=0, column=0, sticky=tk.W, padx=5, pady=5)
+        self.format_var = tk.StringVar()
+        format_combo = ttk.Combobox(audio_frame, textvariable=self.format_var, state="readonly", width=10)
+        format_combo["values"] = ["wav", "mp3"]
+        format_combo.grid(row=0, column=1, sticky=tk.W, padx=5, pady=5)
+        format_combo.bind("<<ComboboxSelected>>", self._on_format_change)
+        Tooltip(format_combo, "Select audio format: WAV (uncompressed) or MP3 (compressed)")
+        
         # Quality selection
-        ttk.Label(audio_frame, text="Quality:").grid(row=0, column=0, sticky=tk.W, padx=5, pady=5)
+        ttk.Label(audio_frame, text="MP3 Quality:").grid(row=1, column=0, sticky=tk.W, padx=5, pady=5)
         self.quality_var = tk.StringVar()
-        quality_combo = ttk.Combobox(audio_frame, textvariable=self.quality_var, state="readonly", width=10)
-        quality_combo["values"] = ["High", "Medium", "Low"]
-        quality_combo.grid(row=0, column=1, sticky=tk.W, padx=5, pady=5)
+        self.quality_combo = ttk.Combobox(audio_frame, textvariable=self.quality_var, state="readonly", width=10)
+        self.quality_combo["values"] = ["High", "Medium", "Low"]
+        self.quality_combo.grid(row=1, column=1, sticky=tk.W, padx=5, pady=5)
+        Tooltip(self.quality_combo, "MP3 quality settings: High (320kbps), Medium (192kbps), Low (128kbps)")
         
         # Mono checkbox
         self.mono_var = tk.BooleanVar()
         mono_check = ttk.Checkbutton(audio_frame, text="Mono Recording", variable=self.mono_var)
-        mono_check.grid(row=1, column=0, columnspan=2, sticky=tk.W, padx=5, pady=5)
+        mono_check.grid(row=2, column=0, columnspan=2, sticky=tk.W, padx=5, pady=5)
         
         # Monitor level
-        ttk.Label(audio_frame, text="Monitor Level:").grid(row=2, column=0, sticky=tk.W, padx=5, pady=5)
+        ttk.Label(audio_frame, text="Monitor Level:").grid(row=3, column=0, sticky=tk.W, padx=5, pady=5)
         self.monitor_var = tk.DoubleVar()
         monitor_scale = ttk.Scale(audio_frame, from_=0.0, to=1.0, variable=self.monitor_var, orient=tk.HORIZONTAL)
-        monitor_scale.grid(row=2, column=1, sticky=tk.W+tk.E, padx=5, pady=5)
+        monitor_scale.grid(row=3, column=1, sticky=tk.W+tk.E, padx=5, pady=5)
         
         # Storage settings frame
         storage_frame = ttk.LabelFrame(self.frame, text="Storage Settings")
@@ -125,9 +167,16 @@ class SettingsPanel:
                 break
         
         # Set audio settings
+        self.format_var.set(status["format"])
         self.quality_var.set(status["quality"].capitalize())
         self.mono_var.set(status["mono"])
         self.monitor_var.set(status["monitor_level"])
+        
+        # Update quality dropdown state based on format
+        if status["format"] == "mp3":
+            self.quality_combo.config(state="readonly")
+        else:
+            self.quality_combo.config(state="disabled")
         
         # Set storage settings
         self.dir_var.set(status["recordings_dir"])
@@ -178,6 +227,14 @@ class SettingsPanel:
                 
         except Exception as e:
             messagebox.showerror("Error", f"Failed to save settings: {e}")
+    
+    def _on_format_change(self, event):
+        """Handle format selection changes."""
+        format_value = self.format_var.get()
+        if format_value == "mp3":
+            self.quality_combo.config(state="readonly")
+        else:
+            self.quality_combo.config(state="disabled")
     
     def _validate_settings(self):
         """
@@ -233,6 +290,7 @@ class SettingsPanel:
         # Create settings dictionary
         settings = {
             "device_index": device_index,
+            "format": self.format_var.get(),
             "quality": quality,
             "mono": self.mono_var.get(),
             "monitor_level": self.monitor_var.get(),

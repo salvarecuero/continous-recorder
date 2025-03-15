@@ -85,6 +85,7 @@ def main():
     print(f"Recording: {'Yes' if status['recording'] else 'No'}")
     print(f"Device Index: {status['device_index']}")
     print(f"Last File: {status['current_file']}")
+    print(f"Audio Format: {status['format'].upper()}")
     print(f"Audio Quality: {rec.config['audio']['quality']}")
     print(f"Mono Mode: {'Yes' if rec.config['audio']['mono'] else 'No'}")
     print(f"Monitor Level: {rec.config['audio']['monitor_level']}")

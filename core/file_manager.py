@@ -8,6 +8,7 @@ import datetime
 import logging
 import subprocess
 import shutil
+from utils.audio_utils import convert_to_mp3 as utils_convert_to_mp3
 
 logger = logging.getLogger("ContinuousRecorder")
 
@@ -70,49 +71,11 @@ class FileManager:
         Returns:
             Path to the MP3 file or None if conversion failed
         """
-        # Check if ffmpeg is available
-        if not shutil.which(self.ffmpeg_path):
-            logger.error(f"FFmpeg not found at {self.ffmpeg_path}")
-            return None
-        
-        # Create MP3 file path
-        mp3_file = os.path.splitext(wav_file)[0] + ".mp3"
-        
         # Get audio quality setting
         quality = self.config.get("audio", "quality")
-        if quality == "high":
-            bitrate = "192k"
-        elif quality == "medium":
-            bitrate = "128k"
-        else:  # low
-            bitrate = "96k"
         
-        try:
-            # Run ffmpeg command
-            cmd = [
-                self.ffmpeg_path,
-                "-i", wav_file,
-                "-codec:a", "libmp3lame",
-                "-b:a", bitrate,
-                "-y",  # Overwrite output file if it exists
-                mp3_file
-            ]
-            
-            # Execute command
-            subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            
-            # Delete WAV file if conversion successful
-            if os.path.exists(mp3_file):
-                os.remove(wav_file)
-                logger.debug(f"Converted {wav_file} to {mp3_file}")
-                return mp3_file
-            else:
-                logger.error(f"MP3 file not created: {mp3_file}")
-                return None
-                
-        except Exception as e:
-            logger.error(f"Error converting {wav_file} to MP3: {e}")
-            return None
+        # Use the implementation from audio_utils.py
+        return utils_convert_to_mp3(wav_file, self.ffmpeg_path, quality)
     
     def cleanup_old_recordings(self):
         """

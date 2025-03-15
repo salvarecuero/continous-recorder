@@ -289,36 +289,58 @@ class RecorderGUI:
         set_device_button = ttk.Button(device_frame, text="Set", command=self.set_device)
         set_device_button.pack(side=tk.LEFT, padx=5)
         
-        # Quality selection
-        quality_frame = ttk.Frame(settings_frame)
-        quality_frame.pack(fill=tk.X, pady=5)
+        # Format selection
+        self.format_frame = ttk.Frame(settings_frame)
+        self.format_frame.pack(fill=tk.X, pady=5)
         
-        ttk.Label(quality_frame, text="Audio Quality:").pack(side=tk.LEFT, padx=5)
+        ttk.Label(self.format_frame, text="Audio Format:").pack(side=tk.LEFT, padx=5)
+        
+        self.format_var = tk.StringVar(value=self.recorder.config["audio"]["format"])
+        format_combo = ttk.Combobox(self.format_frame, textvariable=self.format_var, state="readonly", width=10)
+        format_combo["values"] = ["wav", "mp3"]
+        format_combo.pack(side=tk.LEFT, padx=5)
+        format_combo.bind("<<ComboboxSelected>>", self._on_format_change)
+        
+        set_format_button = ttk.Button(self.format_frame, text="Apply", command=self.set_audio_format)
+        set_format_button.pack(side=tk.LEFT, padx=5)
+        
+        # Quality selection
+        self.quality_frame = ttk.Frame(settings_frame)
+        if self.recorder.config["audio"]["format"] == "mp3":
+            self.quality_frame.pack(fill=tk.X, pady=5)
+        
+        ttk.Label(self.quality_frame, text="MP3 Quality:").pack(side=tk.LEFT, padx=5)
         
         self.quality_var = tk.StringVar(value=self.recorder.config["audio"]["quality"])
-        quality_high = ttk.Radiobutton(quality_frame, text="High", variable=self.quality_var, value="high")
-        quality_high.pack(side=tk.LEFT, padx=5)
+        self.quality_high = ttk.Radiobutton(self.quality_frame, text="High (320kbps)", variable=self.quality_var, value="high")
+        self.quality_high.pack(side=tk.LEFT, padx=5)
         
-        quality_medium = ttk.Radiobutton(quality_frame, text="Medium", variable=self.quality_var, value="medium")
-        quality_medium.pack(side=tk.LEFT, padx=5)
+        self.quality_medium = ttk.Radiobutton(self.quality_frame, text="Medium (192kbps)", variable=self.quality_var, value="medium")
+        self.quality_medium.pack(side=tk.LEFT, padx=5)
         
-        quality_low = ttk.Radiobutton(quality_frame, text="Low", variable=self.quality_var, value="low")
-        quality_low.pack(side=tk.LEFT, padx=5)
+        self.quality_low = ttk.Radiobutton(self.quality_frame, text="Low (128kbps)", variable=self.quality_var, value="low")
+        self.quality_low.pack(side=tk.LEFT, padx=5)
         
-        set_quality_button = ttk.Button(quality_frame, text="Apply", command=self.set_audio_quality)
+        set_quality_button = ttk.Button(self.quality_frame, text="Apply", command=self.set_audio_quality)
         set_quality_button.pack(side=tk.LEFT, padx=5)
         
-        # Mono/Stereo selection
-        mono_frame = ttk.Frame(settings_frame)
-        mono_frame.pack(fill=tk.X, pady=5)
+        # Initialize quality radio buttons state based on format
+        if self.recorder.config["audio"]["format"] != "mp3":
+            self.quality_high.configure(state="disabled")
+            self.quality_medium.configure(state="disabled")
+            self.quality_low.configure(state="disabled")
         
-        ttk.Label(mono_frame, text="Recording Mode:").pack(side=tk.LEFT, padx=5)
+        # Mono/Stereo selection
+        self.mono_frame = ttk.Frame(settings_frame)
+        self.mono_frame.pack(fill=tk.X, pady=5)
+        
+        ttk.Label(self.mono_frame, text="Recording Mode:").pack(side=tk.LEFT, padx=5)
         
         self.mono_var = tk.BooleanVar(value=self.recorder.config["audio"]["mono"])
-        mono_check = ttk.Checkbutton(mono_frame, text="Mono (reduces file size)", variable=self.mono_var)
+        mono_check = ttk.Checkbutton(self.mono_frame, text="Mono (reduces file size)", variable=self.mono_var)
         mono_check.pack(side=tk.LEFT, padx=5)
         
-        set_mono_button = ttk.Button(mono_frame, text="Apply", command=self.set_mono_mode)
+        set_mono_button = ttk.Button(self.mono_frame, text="Apply", command=self.set_mono_mode)
         set_mono_button.pack(side=tk.LEFT, padx=5)
         
         # Monitor level
@@ -516,10 +538,37 @@ class RecorderGUI:
         else:
             messagebox.showerror("Error", "Failed to set recording device")
     
+    def _on_format_change(self, event):
+        """Handle format selection changes."""
+        format_value = self.format_var.get()
+        if format_value == "mp3":
+            # Show and enable quality selection
+            self.quality_frame.pack_forget()  # Remove first to ensure proper ordering
+            self.quality_frame.pack(fill=tk.X, pady=5, after=self.format_frame, before=self.mono_frame)
+            
+            # Enable the quality radio buttons
+            self.quality_high.configure(state="normal")
+            self.quality_medium.configure(state="normal")
+            self.quality_low.configure(state="normal")
+        else:
+            # Hide quality selection for WAV format
+            self.quality_frame.pack_forget()
+    
+    def set_audio_format(self):
+        """Set audio format."""
+        format_value = self.format_var.get()
+        self.recorder.config["audio"]["format"] = format_value
+        self.recorder._save_config()
+        self.log(f"Audio format set to {format_value.upper()}")
+        
+        # Update quality radio buttons state
+        self._on_format_change(None)
+    
     def set_audio_quality(self):
         """Set the audio quality."""
         quality = self.quality_var.get()
-        if self.recorder.set_audio_quality(quality):
+        self.recorder.config["audio"]["quality"] = quality
+        if self.recorder._save_config():
             self.log(f"Set audio quality to {quality}")
         else:
             messagebox.showerror("Error", "Failed to set audio quality")
@@ -604,6 +653,8 @@ class RecorderGUI:
             self.recorder.config["general"]["run_on_startup"] = self.autostart_var.get()
             self.recorder.config["general"]["minimize_to_tray"] = self.minimize_var.get()
             self.recorder.config["paths"]["recordings_dir"] = self.dir_var.get()
+            self.recorder.config["audio"]["format"] = self.format_var.get()
+            self.recorder.config["audio"]["quality"] = self.quality_var.get()
             
             # Save config
             if self.recorder._save_config():

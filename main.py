@@ -176,6 +176,7 @@ def main():
         print(f"Paused: {'Yes' if status['paused'] else 'No'}")
         print(f"Device: {status['device_name']} (Index: {status['device_index']})")
         print(f"Sample Rate: {status['sample_rate']} Hz")
+        print(f"Format: {status['format'].upper()}")
         print(f"Channels: {status['channels']}")
         print(f"Quality: {status['quality']}")
         print(f"Mono: {'Yes' if status['mono'] else 'No'}")
