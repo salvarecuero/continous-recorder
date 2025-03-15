@@ -1,133 +1,172 @@
 # Continuous Audio Recorder
 
-A Windows application that continuously records system audio output, splitting files by time periods and managing storage with automatic cleanup of old recordings.
+A Python application that continuously records audio from system output, saving recordings in configurable time blocks and managing storage.
 
 ## Features
 
-- Records system audio output using WASAPI loopback devices
-- Automatically splits recordings into time-based files
-- Manages storage by cleaning up old recordings
-- Supports WAV and MP3 formats (requires FFmpeg for MP3)
-- GUI and command-line interfaces
-- Minimizes to system tray
-- Autostart with Windows
-
-## Requirements
-
-- Windows 10 or later
-- Python 3.7 or later
-- PyAudioWPatch library
-- FFmpeg (optional, for MP3 conversion)
+- Record audio from any system output device
+- WASAPI loopback support for Windows
+- Configurable recording quality and format
+- Automatic file management with retention policies
+- GUI with system tray support
+- Headless mode for background recording
+- Monitor audio while recording
 
 ## Installation
 
-1. Clone or download this repository
-2. Install the required dependencies:
+### Requirements
+
+- Python 3.7 or higher
+- FFmpeg (for MP3 conversion)
+
+### Setup
+
+1. Clone the repository:
+
+   ```
+   git clone https://github.com/yourusername/continuous-recorder.git
+   cd continuous-recorder
+   ```
+
+2. Install dependencies:
+
+   ```
+   pip install -r requirements.txt
+   ```
+
+3. Run the application:
+   ```
+   python main.py
+   ```
+
+### Windows Installation
+
+On Windows, you can use the provided installation script:
 
 ```
-pip install pyaudiowpatch pillow pystray
+install.bat
 ```
 
-3. (Optional) Download FFmpeg from [ffmpeg.org](https://ffmpeg.org/download.html) and place the executable in the same directory or add it to your PATH.
+This will install all required dependencies and create shortcuts for starting the recorder.
 
 ## Usage
 
-### GUI Interface
+### GUI Mode
 
-Run the GUI application:
-
-```
-python recorder_gui.py
-```
-
-The GUI provides the following features:
-
-- Select recording device
-- Start, stop, and pause recording
-- Configure settings (retention period, recording duration, format)
-- View recording status and logs
-
-### Command-line Interface
-
-Run the command-line interface:
+Run the application without any arguments to start in GUI mode:
 
 ```
-python continuous_recorder.py [options]
+python main.py
+```
+
+The GUI provides controls for:
+
+- Starting, stopping, and pausing recording
+- Selecting audio devices
+- Configuring audio quality and format
+- Setting storage options
+- Viewing recording status
+
+### Headless Mode
+
+Run the application in headless mode for background recording:
+
+```
+python main.py --headless
+```
+
+### Command Line Options
+
+```
+python main.py --help
 ```
 
 Available options:
 
-- `--start`: Start recording immediately
-- `--stop`: Stop recording
-- `--pause`: Pause recording
-- `--resume`: Resume recording
-- `--status`: Show current status
-- `--list-devices`: List available audio devices
-- `--set-device INDEX`: Set recording device by index
-- `--autostart BOOL`: Configure autostart with Windows
-- `--config PATH`: Path to configuration file
-
-### Interactive Mode
-
-Run the application without arguments to enter interactive mode:
-
-```
-python continuous_recorder.py
-```
-
-Available commands:
-
-- `start`: Start recording
-- `stop`: Stop recording
-- `pause`: Pause recording
-- `resume`: Resume recording
-- `status`: Show current status
-- `devices`: List available audio devices
-- `device INDEX`: Set recording device by index
-- `autostart true/false`: Configure autostart
-- `exit`: Exit the application
+- `--config PATH`: Path to configuration file (default: config.ini)
+- `--headless`: Run in headless mode (no GUI)
+- `--list-devices`: List available audio devices and exit
+- `--device INDEX`: Device index to use for recording
 
 ## Configuration
 
-The application uses a configuration file (`config.ini`) with the following settings:
+The application uses a configuration file (config.ini) with the following sections:
 
-### General
+### General Settings
 
-- `retention_days`: Number of days to keep recordings (default: 90)
-- `recording_hours`: Duration of each recording file in hours (default: 3)
-- `run_on_startup`: Whether to run the application at Windows startup (default: true)
-- `minimize_to_tray`: Whether to minimize to system tray (default: true)
+```ini
+[general]
+retention_days = 90
+recording_hours = 3
+run_on_startup = True
+minimize_to_tray = True
+```
 
-### Audio
+- `retention_days`: Number of days to keep recordings
+- `recording_hours`: Duration of each recording block
+- `run_on_startup`: Whether to run on system startup
+- `minimize_to_tray`: Whether to minimize to system tray
 
-- `format`: Output format, either "wav" or "mp3" (default: "mp3")
-- `sample_rate`: Sample rate in Hz (default: 44100)
-- `channels`: Number of audio channels (default: 2)
-- `chunk_size`: Audio buffer size (default: 1024)
-- `device_index`: Index of the recording device (default: auto-detect)
+### Audio Settings
 
-### Paths
+```ini
+[audio]
+sample_rate = 44100
+channels = 2
+chunk_size = 1024
+device_index = 0
+quality = high
+mono = False
+monitor_level = 0.0
+```
 
-- `recordings_dir`: Directory to store recordings (default: "Recordings")
-- `ffmpeg_path`: Path to FFmpeg executable (default: "ffmpeg")
+- `sample_rate`: Sample rate in Hz
+- `channels`: Number of audio channels
+- `chunk_size`: Audio buffer size
+- `device_index`: Index of the recording device
+- `quality`: MP3 quality (high, medium, low)
+- `mono`: Whether to record in mono
+- `monitor_level`: Level for audio monitoring (0.0-1.0)
 
-## Troubleshooting
+### Path Settings
 
-### No audio is being recorded
+```ini
+[paths]
+recordings_dir = Recordings
+ffmpeg_path = ffmpeg
+```
 
-- Make sure you have selected a loopback device
-- Check if the selected device is the one playing audio
-- Try a different loopback device
+- `recordings_dir`: Directory to store recordings
+- `ffmpeg_path`: Path to FFmpeg executable
 
-### FFmpeg conversion fails
+## Project Structure
 
-- Make sure FFmpeg is installed and accessible
-- Check the logs for specific error messages
+The project has been refactored into a modular structure:
 
-### Application crashes
-
-- Check the logs in the `logs` directory for error details
-- Make sure you have the latest version of PyAudioWPatch
+```
+continuous-recorder/
+├── config/
+│   ├── __init__.py
+│   ├── default_config.py
+│   └── config_manager.py
+├── core/
+│   ├── __init__.py
+│   ├── audio_recorder.py
+│   ├── audio_processor.py
+│   ├── device_manager.py
+│   └── file_manager.py
+├── utils/
+│   ├── __init__.py
+│   ├── logging_setup.py
+│   └── system_utils.py
+├── gui/
+│   ├── __init__.py
+│   ├── main_window.py
+│   ├── status_panel.py
+│   └── settings_panel.py
+├── main.py
+└── requirements.txt
+```
 
 ## License
 
